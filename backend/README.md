@@ -36,3 +36,23 @@ Generates 12 merchants (4 trust archetypes x 3 categories), each with catalog pr
 python -m scripts.seed_synthetic_data --dry-run   # preview counts, no DB writes
 python -m scripts.seed_synthetic_data              # insert into DATABASE_URL
 ```
+
+## Composite Trust Engine
+
+`app/trust_engine.py` computes the four weighted trust signals per merchant (payment
+trust, promise-keeping, price-competitiveness, reputation) and combines them into one
+composite score. Reputation's weight is hard-capped at 0.20 regardless of what a caller
+requests, so it can inform the ranking but never dominate it.
+
+```
+GET  /merchants
+GET  /merchants/{merchant_id}/trust-score?product_id=&w_payment_trust=&w_promise_keeping=&w_price_fit=&w_reputation=
+GET  /merchants/{merchant_id}/trust-history
+```
+
+Run the scoring math's unit tests (no DB required):
+
+```
+pip install -r requirements-dev.txt
+pytest tests/ -v
+```
