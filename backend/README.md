@@ -65,8 +65,9 @@ if the top choice fails, it falls back to the next-ranked merchant within the sa
 mandate — no re-prompting the human — logging every attempt.
 
 ```
-POST /intent          {"consumer_id": "...", "goal_text": "earbuds under 2000 within 3 days"}
-POST /buyer/purchase   {"mandate_id": "...", "w_price_fit": 0.5, ...}   # weights optional
+POST /intent             {"consumer_id": "...", "goal_text": "earbuds under 2000 within 3 days"}
+POST /buyer/rank-preview  {"mandate_id": "...", "w_price_fit": 0.5, ...}   # weights optional, no checkout side effect
+POST /buyer/purchase      {"mandate_id": "...", "w_price_fit": 0.5, ...}   # runs checkout with fallback
 GET  /audit/{mandate_id}
 ```
 

@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.audit_trail import fetch_audit_trail, log_audit
@@ -16,6 +17,20 @@ from app.trust_engine import DEFAULT_WEIGHTS, score_merchant
 from app.trust_mirror import build_trust_mirror
 
 app = FastAPI(title="AgentReady API")
+
+@app.middleware("http")
+async def catch_unhandled_exceptions(request: Request, call_next):
+    # Must be registered before CORSMiddleware below, so CORSMiddleware ends up
+    # as the outer layer wrapping this one (Starlette applies the last-added
+    # middleware outermost). An exception that escapes this handler and reaches
+    # Starlette's own ServerErrorMiddleware instead never gets CORS headers, so
+    # the browser reports an opaque "blocked by CORS policy" instead of the
+    # real failure.
+    try:
+        return await call_next(request)
+    except Exception:
+        return JSONResponse(status_code=500, content={"detail": "internal server error"})
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -188,16 +203,39 @@ class PurchaseRequest(BaseModel):
     w_reputation: float | None = None
 
 
+@app.post("/buyer/rank-preview")
+def rank_preview(req: PurchaseRequest):
+    """Runs the 3-layer decision pipeline without executing checkout, so a
+    weight-slider UI can re-rank live without repeatedly attempting payment
+    or consuming the mandate."""
+    weights = _weights_from_query(req.w_payment_trust, req.w_promise_keeping, req.w_price_fit, req.w_reputation)
+
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, category_id, budget_cap_paise, deadline_days, goal_text FROM mandates WHERE id = %s",
+            (req.mandate_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="mandate not found")
+
+        mandate_id, category_id, budget_cap_paise, deadline_days, goal_text = row
+        mandate = {
+            "id": str(mandate_id),
+            "category_id": str(category_id),
+            "budget_cap_paise": budget_cap_paise,
+            "deadline_days": deadline_days,
+            "goal_text": goal_text,
+        }
+        decision = run_buyer_pipeline(cur, mandate, weights=weights)
+        conn.commit()
+
+    return {"mandate_id": mandate["id"], "decision": decision}
+
+
 @app.post("/buyer/purchase")
 def purchase(req: PurchaseRequest):
-    weights = None
-    if any(w is not None for w in (req.w_payment_trust, req.w_promise_keeping, req.w_price_fit, req.w_reputation)):
-        weights = {
-            "payment_trust": req.w_payment_trust if req.w_payment_trust is not None else DEFAULT_WEIGHTS["payment_trust"],
-            "promise_keeping": req.w_promise_keeping if req.w_promise_keeping is not None else DEFAULT_WEIGHTS["promise_keeping"],
-            "price_fit": req.w_price_fit if req.w_price_fit is not None else DEFAULT_WEIGHTS["price_fit"],
-            "reputation": req.w_reputation if req.w_reputation is not None else DEFAULT_WEIGHTS["reputation"],
-        }
+    weights = _weights_from_query(req.w_payment_trust, req.w_promise_keeping, req.w_price_fit, req.w_reputation)
 
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
