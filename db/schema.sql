@@ -97,8 +97,13 @@ CREATE TABLE IF NOT EXISTS mandates (
 );
 
 -- One row per Buyer Agent decision-layer output (or checkout attempt) for a mandate.
+-- `seq` is the authoritative ordering column: a single request logs several rows
+-- inside one transaction, and Postgres's now() returns the same transaction-start
+-- timestamp for all of them, so created_at alone can't be trusted to order rows
+-- from the same request — seq (a plain auto-incrementing counter) can.
 CREATE TABLE IF NOT EXISTS audit_trail (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    seq BIGSERIAL,
     mandate_id UUID NOT NULL REFERENCES mandates(id) ON DELETE CASCADE,
     layer TEXT NOT NULL,
     payload JSONB NOT NULL,

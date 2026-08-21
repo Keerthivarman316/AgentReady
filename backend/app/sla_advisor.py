@@ -11,7 +11,8 @@ from datetime import timedelta
 
 SLA_GRACE_DAYS = 0.5
 DEFAULT_TARGET_PERCENTILE = 0.85
-OVER_PROMISING_MARGIN_DAYS = 0.5
+OVER_PROMISING_RATE_MARGIN = 0.10
+UNDER_PROMISING_LOW_VIOLATION_RATE = 0.02
 UNDER_PROMISING_MARGIN_DAYS = 1.0
 
 
@@ -34,8 +35,12 @@ def fetch_delivery_days(cur, merchant_id: str) -> list[float]:
 def recommend_sla_days(delivery_days: list[float], current_declared_days: int,
                         percentile: float = DEFAULT_TARGET_PERCENTILE) -> dict:
     """Pure: recommends a declared SLA at the given percentile of actual
-    historical delivery time, and assesses whether the current declaration
-    over- or under-promises relative to it."""
+    historical delivery time, and assesses the current declaration by the
+    violation rate it actually produces — not just its distance from the
+    median, since a heavy-tailed delivery distribution can sit a declared
+    SLA right at the median while still missing it close to a third of the
+    time (a real case this caught: median 2.16 days, but 30.8% of orders
+    landed past a 2-day declared SLA)."""
     if not delivery_days:
         return {
             "current_declared_sla_days": current_declared_days,
@@ -49,15 +54,19 @@ def recommend_sla_days(delivery_days: list[float], current_declared_days: int,
     recommended = max(1, math.ceil(sorted_days[idx]))
     median_actual = statistics.median(sorted_days)
 
-    if current_declared_days < median_actual - OVER_PROMISING_MARGIN_DAYS:
+    def violation_rate(declared_days: int) -> float:
+        return sum(1 for d in delivery_days if d > declared_days + SLA_GRACE_DAYS) / len(delivery_days)
+
+    current_rate = violation_rate(current_declared_days)
+    target_violation_rate = 1 - percentile
+
+    if current_rate > target_violation_rate + OVER_PROMISING_RATE_MARGIN:
         assessment = "over_promising"
-    elif current_declared_days > recommended + UNDER_PROMISING_MARGIN_DAYS:
+    elif (current_rate <= UNDER_PROMISING_LOW_VIOLATION_RATE
+          and current_declared_days > recommended + UNDER_PROMISING_MARGIN_DAYS):
         assessment = "under_promising"
     else:
         assessment = "well_calibrated"
-
-    def violation_rate(declared_days: int) -> float:
-        return sum(1 for d in delivery_days if d > declared_days + SLA_GRACE_DAYS) / len(delivery_days)
 
     return {
         "current_declared_sla_days": current_declared_days,

@@ -33,3 +33,16 @@ def test_recommend_sla_projected_violation_rate_lower_at_recommended_when_over_p
     delivery_days = [4.0, 4.5, 5.0, 4.2, 4.8, 5.2, 4.1, 4.6, 4.9, 5.1]
     result = recommend_sla_days(delivery_days, current_declared_days=2)
     assert result["projected_violation_rate"] <= result["current_violation_rate"]
+
+
+def test_recommend_sla_flags_over_promising_even_when_declared_sits_at_median():
+    # Regression: a heavy-tailed distribution (most orders on time, a chunk
+    # badly late) can put the declared SLA right at the median while still
+    # missing it ~30% of the time — the median-distance check alone missed
+    # this; the violation-rate check catches it.
+    on_time = [2.0, 2.1, 1.9, 2.0, 2.2, 1.8, 2.1]
+    late = [5.0, 6.0, 5.5]
+    delivery_days = on_time + late
+    result = recommend_sla_days(delivery_days, current_declared_days=2)
+    assert result["current_violation_rate"] > 0.25
+    assert result["assessment"] == "over_promising"

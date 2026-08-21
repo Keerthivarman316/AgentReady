@@ -15,8 +15,11 @@ def log_audit(cur, mandate_id: str, layer: str, payload: dict) -> None:
 
 
 def fetch_audit_trail(cur, mandate_id: str) -> list[dict]:
+    # Ordered by seq, not created_at: rows logged within one request share a
+    # single transaction-start timestamp (Postgres now() semantics), so
+    # created_at alone can't order rows from the same request correctly.
     cur.execute(
-        "SELECT layer, payload, created_at FROM audit_trail WHERE mandate_id = %s ORDER BY created_at ASC",
+        "SELECT layer, payload, created_at FROM audit_trail WHERE mandate_id = %s ORDER BY seq ASC",
         (mandate_id,),
     )
     return [
