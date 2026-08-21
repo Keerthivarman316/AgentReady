@@ -13,28 +13,9 @@ import re
 from dataclasses import dataclass
 
 from app.ap2_mandate import MandateDraft, build_mandate
-
-CATEGORY_KEYWORDS = {
-    "Electronics": [
-        "earbud", "headphone", "speaker", "camera", "charger", "tracker",
-        "electronics", "gadget", "bluetooth",
-    ],
-    "Fashion": [
-        "shirt", "jeans", "sneaker", "shoe", "wallet", "sweater", "tote",
-        "fashion", "clothing", "bag",
-    ],
-    "Home & Kitchen": [
-        "kettle", "cookware", "pillow", "pan", "dinner", "lamp", "kitchen",
-        "home", "plate", "cutlery",
-    ],
-}
+from app.text_extraction import extract_category, extract_price_paise
 
 DEFAULT_DEADLINE_DAYS = 7
-
-_BUDGET_PATTERNS = [
-    re.compile(r"(?:under|below|max(?:imum)?|budget(?:\s+of)?|up\s+to)\s*(?:₹|rs\.?|inr)?\s*([\d,]+)(k)?", re.I),
-    re.compile(r"(?:₹|rs\.?|inr)\s*([\d,]+)(k)?", re.I),
-]
 
 _DEADLINE_PATTERNS = [
     (re.compile(r"\btomorrow\b", re.I), 1),
@@ -51,29 +32,6 @@ class ExtractedIntent:
     deadline_days: int
 
 
-def _extract_category(text: str) -> str | None:
-    lowered = text.lower()
-    best_match = None
-    best_hits = 0
-    for category, keywords in CATEGORY_KEYWORDS.items():
-        hits = sum(1 for kw in keywords if kw in lowered)
-        if hits > best_hits:
-            best_hits = hits
-            best_match = category
-    return best_match
-
-
-def _extract_budget_paise(text: str) -> int | None:
-    for pattern in _BUDGET_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            amount = int(match.group(1).replace(",", ""))
-            if match.group(2):
-                amount *= 1000
-            return amount * 100
-    return None
-
-
 def _extract_deadline_days(text: str) -> int:
     for pattern, fixed_days in _DEADLINE_PATTERNS:
         match = pattern.search(text)
@@ -86,8 +44,8 @@ def _extract_deadline_days(text: str) -> int:
 
 def extract_intent(goal_text: str) -> ExtractedIntent:
     return ExtractedIntent(
-        category=_extract_category(goal_text),
-        budget_cap_paise=_extract_budget_paise(goal_text),
+        category=extract_category(goal_text),
+        budget_cap_paise=extract_price_paise(goal_text),
         deadline_days=_extract_deadline_days(goal_text),
     )
 

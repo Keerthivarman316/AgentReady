@@ -3,12 +3,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from app.audit_trail import fetch_audit_trail, log_audit
+from app.benchmark_agent import benchmark_merchant
 from app.buyer_agent import run_buyer_pipeline
 from app.checkout import checkout_with_fallback
 from app.db import get_connection
 from app.graph import ping_graph
+from app.growth_advisor import advise_growth, simulate_what_if
 from app.intent_agent import IntentResolutionError, resolve_intent_to_mandate
+from app.readiness_agent import assess_catalog
+from app.sla_advisor import advise_sla
 from app.trust_engine import DEFAULT_WEIGHTS, score_merchant
+from app.trust_mirror import build_trust_mirror
 
 app = FastAPI(title="AgentReady API")
 
@@ -18,6 +23,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _weights_from_query(w_payment_trust: float | None, w_promise_keeping: float | None,
+                         w_price_fit: float | None, w_reputation: float | None) -> dict | None:
+    if all(w is None for w in (w_payment_trust, w_promise_keeping, w_price_fit, w_reputation)):
+        return None
+    return {
+        "payment_trust": w_payment_trust if w_payment_trust is not None else DEFAULT_WEIGHTS["payment_trust"],
+        "promise_keeping": w_promise_keeping if w_promise_keeping is not None else DEFAULT_WEIGHTS["promise_keeping"],
+        "price_fit": w_price_fit if w_price_fit is not None else DEFAULT_WEIGHTS["price_fit"],
+        "reputation": w_reputation if w_reputation is not None else DEFAULT_WEIGHTS["reputation"],
+    }
+
+
+def _fetch_merchant_category_id(cur, merchant_id: str) -> str:
+    cur.execute("SELECT category_id FROM merchants WHERE id = %s", (merchant_id,))
+    row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"merchant {merchant_id} not found")
+    return str(row[0])
 
 
 class PingRequest(BaseModel):
@@ -214,3 +239,94 @@ def get_audit_trail(mandate_id: str):
     with get_connection() as conn, conn.cursor() as cur:
         trail = fetch_audit_trail(cur, mandate_id)
     return trail
+
+
+class ReadinessRequest(BaseModel):
+    items: list[str]
+
+
+@app.post("/merchants/{merchant_id}/readiness")
+def get_readiness(merchant_id: str, req: ReadinessRequest):
+    return assess_catalog(req.items)
+
+
+@app.get("/merchants/{merchant_id}/trust-mirror")
+def get_trust_mirror(
+    merchant_id: str,
+    product_id: str | None = None,
+    w_payment_trust: float | None = None,
+    w_promise_keeping: float | None = None,
+    w_price_fit: float | None = None,
+    w_reputation: float | None = None,
+):
+    weights = _weights_from_query(w_payment_trust, w_promise_keeping, w_price_fit, w_reputation)
+    with get_connection() as conn, conn.cursor() as cur:
+        try:
+            result = build_trust_mirror(cur, merchant_id, product_id=product_id, weights=weights)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        conn.commit()
+    return result
+
+
+@app.get("/merchants/{merchant_id}/benchmark")
+def get_benchmark(
+    merchant_id: str,
+    w_payment_trust: float | None = None,
+    w_promise_keeping: float | None = None,
+    w_price_fit: float | None = None,
+    w_reputation: float | None = None,
+):
+    weights = _weights_from_query(w_payment_trust, w_promise_keeping, w_price_fit, w_reputation)
+    with get_connection() as conn, conn.cursor() as cur:
+        category_id = _fetch_merchant_category_id(cur, merchant_id)
+        result = benchmark_merchant(cur, merchant_id, category_id, weights=weights)
+        conn.commit()
+    return result
+
+
+@app.get("/merchants/{merchant_id}/growth-advisor")
+def get_growth_advisor(
+    merchant_id: str,
+    w_payment_trust: float | None = None,
+    w_promise_keeping: float | None = None,
+    w_price_fit: float | None = None,
+    w_reputation: float | None = None,
+):
+    weights = _weights_from_query(w_payment_trust, w_promise_keeping, w_price_fit, w_reputation)
+    with get_connection() as conn, conn.cursor() as cur:
+        category_id = _fetch_merchant_category_id(cur, merchant_id)
+        result = advise_growth(cur, merchant_id, category_id, weights=weights)
+        conn.commit()
+    return result
+
+
+class WhatIfRequest(BaseModel):
+    component: str
+    target_value: float
+    w_payment_trust: float | None = None
+    w_promise_keeping: float | None = None
+    w_price_fit: float | None = None
+    w_reputation: float | None = None
+
+
+@app.post("/merchants/{merchant_id}/growth-advisor/what-if")
+def post_what_if(merchant_id: str, req: WhatIfRequest):
+    if req.component not in DEFAULT_WEIGHTS:
+        raise HTTPException(status_code=422, detail=f"unknown component: {req.component!r}")
+    weights = _weights_from_query(req.w_payment_trust, req.w_promise_keeping, req.w_price_fit, req.w_reputation)
+    with get_connection() as conn, conn.cursor() as cur:
+        category_id = _fetch_merchant_category_id(cur, merchant_id)
+        result = simulate_what_if(cur, merchant_id, category_id, req.component, req.target_value, weights=weights)
+        conn.commit()
+    return result
+
+
+@app.get("/merchants/{merchant_id}/sla-advisor")
+def get_sla_advisor(merchant_id: str):
+    with get_connection() as conn, conn.cursor() as cur:
+        try:
+            result = advise_sla(cur, merchant_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result

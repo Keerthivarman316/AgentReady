@@ -70,9 +70,38 @@ POST /buyer/purchase   {"mandate_id": "...", "w_price_fit": 0.5, ...}   # weight
 GET  /audit/{mandate_id}
 ```
 
+## Seller side: Readiness Agent, Trust Mirror, Benchmark Agent, Growth Advisor, SLA Advisor
+
+`app/readiness_agent.py` scores how machine-readable a merchant's raw catalog text is
+(price/category/description-length checks), reusing the same extraction helpers as the
+Intent Agent (`app/text_extraction.py`) — without this step a merchant is invisible to
+agent buyers regardless of its real trust metrics.
+
+`app/trust_mirror.py` shows the merchant exactly what the Buyer Agent sees: the same
+components, weights, and contributions, plus which signal is weakest/strongest.
+
+`app/benchmark_agent.py` compares the merchant's score against its category's median —
+rank and gap only, never named competitors, even in the synthetic data.
+
+`app/growth_advisor.py` turns that gap into a ranked fix list (ranked by score *impact*,
+gap size times weight — not raw gap size) and can re-run the same Composite Trust Engine
+as a what-if simulation: override one component, see the rank shift.
+
+`app/sla_advisor.py` recommends a declared SLA from the merchant's own historical COD
+delivery times (85th percentile by default), flagging over- or under-promising.
+
+```
+POST /merchants/{id}/readiness              {"items": ["raw catalog text", ...]}
+GET  /merchants/{id}/trust-mirror?product_id=&w_payment_trust=...
+GET  /merchants/{id}/benchmark?w_payment_trust=...
+GET  /merchants/{id}/growth-advisor?w_payment_trust=...
+POST /merchants/{id}/growth-advisor/what-if  {"component": "payment_trust", "target_value": 0.9}
+GET  /merchants/{id}/sla-advisor
+```
+
 Run the full unit test suite (no DB required — Postgres-backed code paths like
-`rank_by_trust`, `fetch_candidates`, and the mandate/audit tables are exercised
-against a live DB, not unit-tested):
+`rank_by_trust`, `fetch_candidates`, `compute_category_scores`, and the mandate/audit
+tables are exercised against a live DB, not unit-tested):
 
 ```
 pip install -r requirements-dev.txt
