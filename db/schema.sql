@@ -81,8 +81,33 @@ CREATE TABLE IF NOT EXISTS trust_score_history (
     computed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Issued by the Intent Agent; mandate_hash is an HMAC over the mandate's core
+-- fields, standing in for AP2's cryptographic signature.
+CREATE TABLE IF NOT EXISTS mandates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    consumer_id TEXT NOT NULL,
+    category_id UUID NOT NULL REFERENCES categories(id),
+    budget_cap_paise BIGINT NOT NULL,
+    deadline_days INT NOT NULL,
+    goal_text TEXT NOT NULL,
+    mandate_hash TEXT NOT NULL,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'expired', 'fulfilled', 'cancelled'))
+);
+
+-- One row per Buyer Agent decision-layer output (or checkout attempt) for a mandate.
+CREATE TABLE IF NOT EXISTS audit_trail (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    mandate_id UUID NOT NULL REFERENCES mandates(id) ON DELETE CASCADE,
+    layer TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_products_merchant ON products(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_refunds_transaction ON refunds(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_disputes_transaction ON disputes(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_trust_score_history_merchant ON trust_score_history(merchant_id);
+CREATE INDEX IF NOT EXISTS idx_audit_trail_mandate ON audit_trail(mandate_id);
