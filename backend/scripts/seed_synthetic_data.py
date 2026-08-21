@@ -1,0 +1,346 @@
+"""Generate synthetic merchants, catalog, and transaction history for AgentReady.
+
+Produces 3-5 merchants per category, each following one of four trust
+archetypes (trusted_leader / budget_reliable / flashy_risky / inconsistent)
+so the Composite Trust Engine and demo have a realistic, varied spread to
+score and rank against.
+
+Usage:
+    python -m scripts.seed_synthetic_data --dry-run     # print summary only
+    python -m scripts.seed_synthetic_data                # insert into DATABASE_URL
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import random
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+
+from dotenv import load_dotenv
+
+SEED = 42
+
+CATEGORIES = ["Electronics", "Fashion", "Home & Kitchen"]
+
+PRODUCT_POOL = {
+    "Electronics": [
+        ("Wireless Earbuds Pro", "Bluetooth 5.3 earbuds with active noise cancellation and 30hr case battery."),
+        ("Smart Fitness Tracker", "Heart-rate and sleep tracking band with 10-day battery life."),
+        ("4K Action Camera", "Waterproof action camera with image stabilization, 4K/60fps."),
+        ("Portable Bluetooth Speaker", "IPX7 rated speaker with 12-hour playback."),
+        ("USB-C Fast Charger 65W", "GaN charger, dual-port, laptop and phone compatible."),
+        ("Noise Cancelling Headphones", "Over-ear ANC headphones with 40-hour battery."),
+    ],
+    "Fashion": [
+        ("Cotton Casual Shirt", "100% cotton regular-fit shirt, machine washable."),
+        ("Slim Fit Denim Jeans", "Stretch denim, mid-rise, slim fit."),
+        ("Running Sneakers", "Lightweight mesh running shoes with cushioned sole."),
+        ("Leather Wallet", "Genuine leather bifold wallet with RFID blocking."),
+        ("Wool Blend Sweater", "Crew-neck sweater, wool-acrylic blend."),
+        ("Canvas Tote Bag", "Durable canvas tote with inner pocket."),
+    ],
+    "Home & Kitchen": [
+        ("Stainless Steel Cookware Set", "5-piece induction-compatible cookware set."),
+        ("Electric Kettle 1.5L", "Auto shut-off electric kettle with boil-dry protection."),
+        ("Memory Foam Pillow", "Contoured cervical support memory foam pillow."),
+        ("Non-Stick Frying Pan", "28cm non-stick frying pan, PFOA-free coating."),
+        ("Ceramic Dinner Set", "16-piece ceramic dinnerware set, dishwasher safe."),
+        ("LED Desk Lamp", "Dimmable LED desk lamp with USB charging port."),
+    ],
+}
+
+PRICE_BAND_PAISE = {
+    "Electronics": (80_000, 400_000),
+    "Fashion": (30_000, 250_000),
+    "Home & Kitchen": (40_000, 300_000),
+}
+
+MERCHANT_NAME_PREFIXES = [
+    "Nova", "Bright", "Urban", "Prime", "Zenith", "Coral", "Swift", "Aster",
+    "Northline", "Ember", "Vertex", "Willow",
+]
+
+REASON_CODES_DELIVERY = ["item_not_delivered", "item_not_received"]
+REASON_CODES_OTHER = ["item_defective", "wrong_item", "buyer_remorse"]
+DISPUTE_REASON_CODES = ["item_not_delivered", "item_not_received", "item_defective", "unauthorized_transaction"]
+
+PAYMENT_METHODS = ["card", "upi", "cod"]
+PAYMENT_METHOD_WEIGHTS = [0.35, 0.45, 0.20]
+
+
+@dataclass
+class Archetype:
+    key: str
+    payment_success_rate: float
+    refund_rate: float
+    dispute_rate: float
+    sla_violation_rate: float
+    avg_rating: float
+    review_count_range: tuple[int, int]
+    price_multiplier: float
+
+
+ARCHETYPES = [
+    Archetype("trusted_leader", 0.97, 0.03, 0.005, 0.05, 4.6, (150, 400), 1.05),
+    Archetype("budget_reliable", 0.93, 0.06, 0.01, 0.10, 4.1, (80, 200), 0.85),
+    Archetype("flashy_risky", 0.85, 0.18, 0.06, 0.35, 4.7, (500, 1200), 1.00),
+    Archetype("inconsistent", 0.89, 0.10, 0.03, 0.20, 3.6, (40, 120), 0.95),
+]
+
+TXNS_PER_MERCHANT = (40, 80)
+HISTORY_DAYS = 90
+
+
+@dataclass
+class Merchant:
+    id: str
+    name: str
+    category: str
+    declared_sla_days: int
+    archetype: Archetype
+    products: list[dict] = field(default_factory=list)
+
+
+def build_merchants(rng: random.Random) -> list[Merchant]:
+    merchants: list[Merchant] = []
+    for category in CATEGORIES:
+        names = rng.sample(MERCHANT_NAME_PREFIXES, k=len(ARCHETYPES))
+        for archetype, prefix in zip(ARCHETYPES, names):
+            suffix = category.split(" ")[0]
+            merchant = Merchant(
+                id=str(uuid.uuid4()),
+                name=f"{prefix} {suffix}",
+                category=category,
+                declared_sla_days=rng.choice([2, 3, 4, 5]),
+                archetype=archetype,
+            )
+            for prod_name, prod_desc in rng.sample(PRODUCT_POOL[category], k=2):
+                lo, hi = PRICE_BAND_PAISE[category]
+                base_price = rng.randint(lo, hi)
+                price = int(base_price * archetype.price_multiplier)
+                merchant.products.append(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "name": prod_name,
+                        "description": prod_desc,
+                        "price_paise": price,
+                    }
+                )
+            merchants.append(merchant)
+    return merchants
+
+
+def build_transactions(rng: random.Random, merchant: Merchant, now: datetime):
+    transactions = []
+    refunds = []
+    disputes = []
+
+    n = rng.randint(*TXNS_PER_MERCHANT)
+    for _ in range(n):
+        product = rng.choice(merchant.products)
+        order_created_at = now - timedelta(
+            days=rng.uniform(0, HISTORY_DAYS),
+            hours=rng.uniform(0, 24),
+        )
+        method = rng.choices(PAYMENT_METHODS, weights=PAYMENT_METHOD_WEIGHTS, k=1)[0]
+
+        txn_id = str(uuid.uuid4())
+        success = rng.random() < merchant.archetype.payment_success_rate
+        status = "captured" if success else "failed"
+
+        payment_captured_at = None
+        if success and method == "cod":
+            violated = rng.random() < merchant.archetype.sla_violation_rate
+            delivery_days = merchant.declared_sla_days + (
+                rng.uniform(2, 6) if violated else rng.uniform(-0.5, 0.5)
+            )
+            payment_captured_at = order_created_at + timedelta(days=max(delivery_days, 0.2))
+        elif success:
+            payment_captured_at = order_created_at + timedelta(minutes=rng.uniform(1, 30))
+
+        transactions.append(
+            {
+                "id": txn_id,
+                "merchant_id": merchant.id,
+                "product_id": product["id"],
+                "amount_paise": product["price_paise"],
+                "payment_method": method,
+                "status": status,
+                "order_created_at": order_created_at,
+                "payment_captured_at": payment_captured_at,
+            }
+        )
+
+        if success and rng.random() < merchant.archetype.refund_rate:
+            delivery_related = rng.random() < merchant.archetype.sla_violation_rate
+            reason = rng.choice(REASON_CODES_DELIVERY if delivery_related else REASON_CODES_OTHER)
+            refunds.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "transaction_id": txn_id,
+                    "reason_code": reason,
+                    "amount_paise": product["price_paise"],
+                    "status": rng.choices(["processed", "pending", "rejected"], weights=[0.8, 0.15, 0.05])[0],
+                }
+            )
+
+        if success and rng.random() < merchant.archetype.dispute_rate:
+            disputes.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "transaction_id": txn_id,
+                    "reason_code": rng.choice(DISPUTE_REASON_CODES),
+                    "status": rng.choices(["open", "won", "lost"], weights=[0.3, 0.4, 0.3])[0],
+                }
+            )
+
+    return transactions, refunds, disputes
+
+
+def generate_dataset():
+    rng = random.Random(SEED)
+    now = datetime.now(timezone.utc)
+
+    merchants = build_merchants(rng)
+
+    all_transactions = []
+    all_refunds = []
+    all_disputes = []
+    all_reputation = []
+
+    for merchant in merchants:
+        transactions, refunds, disputes = build_transactions(rng, merchant, now)
+        all_transactions.extend(transactions)
+        all_refunds.extend(refunds)
+        all_disputes.extend(disputes)
+        lo, hi = merchant.archetype.review_count_range
+        all_reputation.append(
+            {
+                "merchant_id": merchant.id,
+                "avg_rating": round(merchant.archetype.avg_rating + rng.uniform(-0.15, 0.15), 1),
+                "review_count": rng.randint(lo, hi),
+            }
+        )
+
+    return merchants, all_transactions, all_refunds, all_disputes, all_reputation
+
+
+def insert_dataset(merchants, transactions, refunds, disputes, reputation):
+    import psycopg
+
+    load_dotenv()
+    database_url = os.environ["DATABASE_URL"]
+
+    with psycopg.connect(database_url) as conn:
+        with conn.cursor() as cur:
+            category_ids = {}
+            for name in CATEGORIES:
+                cur.execute(
+                    """
+                    INSERT INTO categories (name) VALUES (%s)
+                    ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+                    RETURNING id
+                    """,
+                    (name,),
+                )
+                category_ids[name] = cur.fetchone()[0]
+
+            for merchant in merchants:
+                cur.execute(
+                    """
+                    INSERT INTO merchants (id, name, category_id, declared_sla_days)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (merchant.id, merchant.name, category_ids[merchant.category], merchant.declared_sla_days),
+                )
+                for product in merchant.products:
+                    cur.execute(
+                        """
+                        INSERT INTO products (id, merchant_id, category_id, name, description, price_paise)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            product["id"],
+                            merchant.id,
+                            category_ids[merchant.category],
+                            product["name"],
+                            product["description"],
+                            product["price_paise"],
+                        ),
+                    )
+
+            for txn in transactions:
+                cur.execute(
+                    """
+                    INSERT INTO transactions
+                        (id, merchant_id, product_id, amount_paise, payment_method,
+                         status, order_created_at, payment_captured_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        txn["id"], txn["merchant_id"], txn["product_id"], txn["amount_paise"],
+                        txn["payment_method"], txn["status"], txn["order_created_at"], txn["payment_captured_at"],
+                    ),
+                )
+
+            for refund in refunds:
+                cur.execute(
+                    """
+                    INSERT INTO refunds (id, transaction_id, reason_code, amount_paise, status)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (refund["id"], refund["transaction_id"], refund["reason_code"], refund["amount_paise"], refund["status"]),
+                )
+
+            for dispute in disputes:
+                cur.execute(
+                    """
+                    INSERT INTO disputes (id, transaction_id, reason_code, status)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (dispute["id"], dispute["transaction_id"], dispute["reason_code"], dispute["status"]),
+                )
+
+            for rep in reputation:
+                cur.execute(
+                    """
+                    INSERT INTO reputation (merchant_id, avg_rating, review_count)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (rep["merchant_id"], rep["avg_rating"], rep["review_count"]),
+                )
+
+        conn.commit()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dry-run", action="store_true", help="generate and summarize without touching the DB")
+    args = parser.parse_args()
+
+    merchants, transactions, refunds, disputes, reputation = generate_dataset()
+
+    print(f"Merchants: {len(merchants)}")
+    for m in merchants:
+        print(
+            f"  - {m.name:20s} [{m.category:15s}] archetype={m.archetype.key:16s} "
+            f"sla={m.declared_sla_days}d products={len(m.products)}"
+        )
+    print(f"Transactions: {len(transactions)}")
+    print(f"Refunds: {len(refunds)}")
+    print(f"Disputes: {len(disputes)}")
+    print(f"Reputation rows: {len(reputation)}")
+
+    if args.dry_run:
+        print("\n--dry-run set: nothing written to the database.")
+        return
+
+    insert_dataset(merchants, transactions, refunds, disputes, reputation)
+    print("\nInserted synthetic dataset into DATABASE_URL.")
+
+
+if __name__ == "__main__":
+    main()
