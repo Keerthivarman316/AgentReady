@@ -1,3 +1,5 @@
+import json
+
 from app.checkout import checkout_with_fallback
 
 
@@ -74,3 +76,31 @@ def test_checkout_exhausted_when_all_candidates_fail():
     assert "checkout_exhausted" in layers
     # No fallback logged after the last candidate fails — nothing left to fall back to.
     assert layers.count("checkout_fallback") == 1
+
+
+def test_checkout_force_fail_ranks_skips_real_order_creation():
+    cur = FakeCursor()
+    candidates = [_candidate("a"), _candidate("b")]
+    real_order_attempts = []
+
+    def create_order_fn(candidate):
+        real_order_attempts.append(candidate["product_id"])
+        return {"id": f"order_{candidate['product_id']}"}
+
+    result = checkout_with_fallback(cur, "mandate-1", candidates, create_order_fn=create_order_fn, force_fail_ranks={0})
+
+    assert result["status"] == "success"
+    assert result["rank"] == 1
+    assert real_order_attempts == ["b"]  # rank 0 never reached the real create_order_fn
+
+
+def test_checkout_force_fail_ranks_marks_failure_as_simulated():
+    cur = FakeCursor()
+    candidates = [_candidate("a"), _candidate("b")]
+    checkout_with_fallback(cur, "mandate-1", candidates, create_order_fn=lambda c: {"id": "ok"}, force_fail_ranks={0})
+
+    failure_payloads = [
+        json.loads(call[1][2]) for call in cur.calls if call[1][1] == "checkout_failure"
+    ]
+    assert len(failure_payloads) == 1
+    assert failure_payloads[0]["simulated"] is True

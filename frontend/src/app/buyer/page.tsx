@@ -17,6 +17,7 @@ export default function BuyerPage() {
   const [checkout, setCheckout] = useState<CheckoutResult | null>(null);
   const [loading, setLoading] = useState<"intent" | "preview" | "purchase" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [simulateTopFailure, setSimulateTopFailure] = useState(false);
 
   async function submitIntent() {
     setLoading("intent");
@@ -55,7 +56,7 @@ export default function BuyerPage() {
     setLoading("purchase");
     setError(null);
     try {
-      const result = await api.purchase(mandate.mandate_id, toOverrides(weights));
+      const result = await api.purchase(mandate.mandate_id, toOverrides(weights), simulateTopFailure ? 0 : undefined);
       setDecision(result.decision);
       setCheckout(result.checkout);
     } catch (e) {
@@ -133,13 +134,23 @@ export default function BuyerPage() {
               Ranking {loading === "preview" && <span className="text-gray-400">(recomputing…)</span>}
             </h2>
             {decision.status === "ranked" && (
-              <button
-                onClick={confirmPurchase}
-                disabled={loading === "purchase"}
-                className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
-              >
-                {loading === "purchase" ? "Checking out…" : "Confirm purchase"}
-              </button>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={simulateTopFailure}
+                    onChange={(e) => setSimulateTopFailure(e.target.checked)}
+                  />
+                  Simulate top-choice failure
+                </label>
+                <button
+                  onClick={confirmPurchase}
+                  disabled={loading === "purchase"}
+                  className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {loading === "purchase" ? "Checking out…" : "Confirm purchase"}
+                </button>
+              </div>
             )}
           </div>
 

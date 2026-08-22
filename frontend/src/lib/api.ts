@@ -56,10 +56,10 @@ export const api = {
       body: JSON.stringify({ mandate_id, ...weights }),
     }),
 
-  purchase: (mandate_id: string, weights?: WeightOverrides) =>
+  purchase: (mandate_id: string, weights?: WeightOverrides, simulateFailureRank?: number) =>
     apiFetch<PurchaseResult>("/buyer/purchase", {
       method: "POST",
-      body: JSON.stringify({ mandate_id, ...weights }),
+      body: JSON.stringify({ mandate_id, ...weights, simulate_failure_rank: simulateFailureRank ?? null }),
     }),
 
   getAuditTrail: (mandate_id: string) => apiFetch<AuditEntry[]>(`/audit/${mandate_id}`),

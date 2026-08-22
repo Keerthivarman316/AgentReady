@@ -201,6 +201,7 @@ class PurchaseRequest(BaseModel):
     w_promise_keeping: float | None = None
     w_price_fit: float | None = None
     w_reputation: float | None = None
+    simulate_failure_rank: int | None = None
 
 
 @app.post("/buyer/rank-preview")
@@ -263,7 +264,8 @@ def purchase(req: PurchaseRequest):
             conn.commit()
             return {"mandate_id": mandate["id"], "decision": decision, "checkout": None}
 
-        checkout_result = checkout_with_fallback(cur, mandate["id"], decision["ranking"])
+        force_fail_ranks = {req.simulate_failure_rank} if req.simulate_failure_rank is not None else None
+        checkout_result = checkout_with_fallback(cur, mandate["id"], decision["ranking"], force_fail_ranks=force_fail_ranks)
 
         new_status = "fulfilled" if checkout_result["status"] == "success" else "active"
         cur.execute("UPDATE mandates SET status = %s WHERE id = %s", (new_status, mandate["id"]))

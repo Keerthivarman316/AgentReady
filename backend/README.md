@@ -62,12 +62,15 @@ Engine ranking) -> real-time optimization (live-price tie-break within a score e
 
 `app/checkout.py` attempts Razorpay test-mode checkout on the ranked candidates in order;
 if the top choice fails, it falls back to the next-ranked merchant within the same
-mandate — no re-prompting the human — logging every attempt.
+mandate — no re-prompting the human — logging every attempt. Pass `simulate_failure_rank`
+to `/buyer/purchase` to force a specific rank to fail deterministically (audit-logged with
+`"simulated": true`) — this is what makes the fallback path demoable on cue instead of
+depending on an incidental Razorpay rejection.
 
 ```
 POST /intent             {"consumer_id": "...", "goal_text": "earbuds under 2000 within 3 days"}
 POST /buyer/rank-preview  {"mandate_id": "...", "w_price_fit": 0.5, ...}   # weights optional, no checkout side effect
-POST /buyer/purchase      {"mandate_id": "...", "w_price_fit": 0.5, ...}   # runs checkout with fallback
+POST /buyer/purchase      {"mandate_id": "...", "w_price_fit": 0.5, "simulate_failure_rank": 0, ...}   # runs checkout with fallback
 GET  /audit/{mandate_id}
 ```
 

@@ -2,6 +2,11 @@
 Buyer Agent's ranked candidates in order. If the top choice fails at
 execution time, it falls back to the next-ranked merchant within the same
 mandate — no re-prompting the human — and logs every attempt and failure.
+
+`force_fail_ranks` exists solely to make that failure/fallback path
+demoable on command: without it, a failure only happens when Razorpay
+itself rejects the order (or isn't configured), which isn't something a
+live demo can reliably trigger on cue.
 """
 
 from __future__ import annotations
@@ -11,6 +16,10 @@ import os
 import razorpay
 
 from app.audit_trail import log_audit
+
+
+class SimulatedCheckoutFailure(Exception):
+    """Raised in place of a real checkout attempt for a rank in force_fail_ranks."""
 
 
 def get_razorpay_client() -> razorpay.Client:
@@ -31,19 +40,24 @@ def create_test_order(candidate: dict, receipt: str) -> dict:
     })
 
 
-def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], create_order_fn=None) -> dict:
+def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], create_order_fn=None,
+                            force_fail_ranks: set[int] | None = None) -> dict:
     if create_order_fn is None:
         create_order_fn = lambda candidate: create_test_order(candidate, receipt=f"{mandate_id}-{candidate['product_id']}")
+    force_fail_ranks = force_fail_ranks or set()
 
     for rank, candidate in enumerate(ranked_candidates):
         log_audit(cur, mandate_id, "checkout_attempt", {
             "rank": rank, "merchant_name": candidate["merchant_name"], "product_name": candidate["product_name"],
         })
         try:
+            if rank in force_fail_ranks:
+                raise SimulatedCheckoutFailure("scripted failure (demo): forced for this rank")
             order = create_order_fn(candidate)
         except Exception as exc:
             log_audit(cur, mandate_id, "checkout_failure", {
                 "rank": rank, "merchant_name": candidate["merchant_name"], "error": str(exc),
+                "simulated": isinstance(exc, SimulatedCheckoutFailure),
             })
             if rank + 1 < len(ranked_candidates):
                 log_audit(cur, mandate_id, "checkout_fallback", {
