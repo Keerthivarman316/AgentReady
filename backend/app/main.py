@@ -1,7 +1,11 @@
+import logging
+
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger("agentready")
 
 from app.audit_trail import fetch_audit_trail, log_audit
 from app.benchmark_agent import benchmark_merchant
@@ -11,6 +15,7 @@ from app.db import get_connection
 from app.graph import ping_graph
 from app.growth_advisor import advise_growth, simulate_what_if
 from app.intent_agent import IntentResolutionError, resolve_intent_to_mandate
+from app.lost_sale_signal import get_lost_sale_signal
 from app.readiness_agent import assess_catalog
 from app.sla_advisor import advise_sla
 from app.trust_engine import DEFAULT_WEIGHTS, score_merchant
@@ -29,6 +34,9 @@ async def catch_unhandled_exceptions(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception:
+        # Logged here because the client only ever gets a generic message —
+        # without this, every unhandled error is invisible server-side too.
+        logger.exception("unhandled exception on %s %s", request.method, request.url.path)
         return JSONResponse(status_code=500, content={"detail": "internal server error"})
 
 
@@ -378,4 +386,11 @@ def get_sla_advisor(merchant_id: str):
             result = advise_sla(cur, merchant_id)
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result
+
+
+@app.get("/merchants/{merchant_id}/lost-sale-signal")
+def get_lost_sale_signal_endpoint(merchant_id: str):
+    with get_connection() as conn, conn.cursor() as cur:
+        result = get_lost_sale_signal(cur, merchant_id)
     return result

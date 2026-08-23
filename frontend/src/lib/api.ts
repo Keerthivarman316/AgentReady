@@ -4,6 +4,7 @@ import type {
   DecisionResult,
   GrowthAdvisorResult,
   IntentResult,
+  LostSaleSignalResult,
   Merchant,
   PurchaseResult,
   ReadinessResult,
@@ -85,6 +86,9 @@ export const api = {
     }),
 
   getSlaAdvisor: (merchantId: string) => apiFetch<SlaAdvisorResult>(`/merchants/${merchantId}/sla-advisor`),
+
+  getLostSaleSignal: (merchantId: string) =>
+    apiFetch<LostSaleSignalResult>(`/merchants/${merchantId}/lost-sale-signal`),
 
   postReadiness: (merchantId: string, items: string[]) =>
     apiFetch<ReadinessResult>(`/merchants/${merchantId}/readiness`, {

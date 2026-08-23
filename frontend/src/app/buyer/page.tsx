@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ShoppingBag, FlaskConical } from "lucide-react";
+import { ShoppingBag, FlaskConical, ShieldAlert } from "lucide-react";
 import { api, formatPaise, formatScore } from "@/lib/api";
 import type { CheckoutResult, DecisionResult, IntentResult, RankedCandidate, TrustWeights } from "@/lib/types";
 import { DEFAULT_WEIGHTS } from "@/lib/weights";
@@ -205,6 +205,13 @@ export default function BuyerPage() {
             </div>
           </CardHeader>
           <CardContent>
+            {(decision.quarantined_count ?? 0) > 0 && (
+              <p className="mb-3 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                <ShieldAlert className="size-3.5" />
+                {decision.quarantined_count} merchant{decision.quarantined_count === 1 ? "" : "s"} excluded — reputation
+                didn&apos;t match operational data.
+              </p>
+            )}
             {decision.status === "no_candidates" ? (
               <p className="text-sm text-muted-foreground">No candidates survive the hard constraints for this mandate.</p>
             ) : (

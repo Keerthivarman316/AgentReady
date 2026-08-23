@@ -62,18 +62,25 @@ def apply_hard_constraints(candidates: list[dict], budget_cap_paise: int, deadli
     return survivors, rejected
 
 
-def rank_by_trust(cur, candidates: list[dict], weights: dict | None = None) -> list[dict]:
-    ranked = []
+def rank_by_trust(cur, candidates: list[dict], weights: dict | None = None) -> tuple[list[dict], list[dict]]:
+    """Returns (ranked, quarantined). A candidate whose trust-integrity check
+    flags it (reputation inconsistent with its own operational data) never
+    reaches the buyer — quarantined, not merely ranked low."""
+    ranked, quarantined = [], []
     for c in candidates:
         result = score_merchant(cur, c["merchant_id"], product_id=c["product_id"], weights=weights)
-        ranked.append({
+        enriched = {
             **c,
             "composite_score": result["composite_score"],
             "trust_components": result["components"],
             "weights_used": result["weights"],
-        })
+        }
+        if result["integrity"]["flagged"]:
+            quarantined.append({**enriched, "integrity_reason": result["integrity"]["reason"]})
+        else:
+            ranked.append(enriched)
     ranked.sort(key=lambda c: c["composite_score"], reverse=True)
-    return ranked
+    return ranked, quarantined
 
 
 def real_time_optimize(ranked_candidates: list[dict], live_price_lookup=None,
@@ -111,7 +118,19 @@ def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_pri
         log_audit(cur, mandate_id, "decision", {"status": "no_candidates"})
         return {"status": "no_candidates", "ranking": []}
 
-    ranked = rank_by_trust(cur, survivors, weights)
+    ranked, quarantined = rank_by_trust(cur, survivors, weights)
+    log_audit(cur, mandate_id, "trust_integrity", {
+        "quarantined_count": len(quarantined),
+        "reasons": [
+            {"merchant_name": c["merchant_name"], "product_name": c["product_name"], "reason": c["integrity_reason"]}
+            for c in quarantined
+        ],
+    })
+
+    if not ranked:
+        log_audit(cur, mandate_id, "decision", {"status": "no_candidates"})
+        return {"status": "no_candidates", "ranking": [], "quarantined_count": len(quarantined)}
+
     log_audit(cur, mandate_id, "heuristics", {
         "ranking": [
             {"merchant_name": c["merchant_name"], "product_name": c["product_name"], "composite_score": c["composite_score"]}
@@ -127,4 +146,4 @@ def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_pri
         ],
     })
 
-    return {"status": "ranked", "ranking": optimized}
+    return {"status": "ranked", "ranking": optimized, "quarantined_count": len(quarantined)}

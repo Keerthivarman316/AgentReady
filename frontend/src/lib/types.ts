@@ -19,12 +19,21 @@ export interface TrustWeights {
   reputation: number;
 }
 
+export interface TrustIntegrityResult {
+  flagged: boolean;
+  reputation: number;
+  operational_average: number;
+  gap: number;
+  reason: string | null;
+}
+
 export interface TrustScoreResult {
   merchant_id: string;
   product_id: string | null;
   components: TrustComponents;
   weights: TrustWeights;
   composite_score: number;
+  integrity: TrustIntegrityResult;
 }
 
 export interface TrustMirrorResult extends TrustScoreResult {
@@ -67,6 +76,11 @@ export interface WhatIfResult {
   before_score: number;
   after_score: number;
   total_in_category: number;
+}
+
+export interface LostSaleSignalResult {
+  sample_size: number;
+  reason_breakdown: Record<string, number>;
 }
 
 export interface SlaAdvisorResult {
@@ -120,6 +134,7 @@ export interface RankedCandidate {
 export interface DecisionResult {
   status: "ranked" | "no_candidates";
   ranking: RankedCandidate[];
+  quarantined_count?: number;
 }
 
 export interface CheckoutResult {

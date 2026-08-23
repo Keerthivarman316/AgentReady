@@ -13,6 +13,8 @@ import json
 from dataclasses import dataclass
 from datetime import timedelta
 
+from app.trust_integrity import assess_trust_integrity
+
 # Reputation is real signal but self-reported and gameable — its weight is
 # hard-capped so it can inform the ranking but never dominate it, regardless
 # of what weight a caller (or a demo weight-slider) requests.
@@ -275,4 +277,5 @@ def score_merchant(cur, merchant_id: str, product_id: str | None = None,
         "components": components,
         "weights": resolved_weights,
         "composite_score": composite,
+        "integrity": assess_trust_integrity(components),
     }

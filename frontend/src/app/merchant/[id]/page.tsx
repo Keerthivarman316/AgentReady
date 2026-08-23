@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ShieldCheck } from "lucide-react";
+import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { api, formatPercent, formatScore } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { BenchmarkResult, GrowthAdvisorResult, SlaAdvisorResult, TrustComponents, TrustMirrorResult, TrustWeights, WhatIfResult } from "@/lib/types";
+import type { BenchmarkResult, GrowthAdvisorResult, LostSaleSignalResult, SlaAdvisorResult, TrustComponents, TrustMirrorResult, TrustWeights, WhatIfResult } from "@/lib/types";
 import { DEFAULT_WEIGHTS } from "@/lib/weights";
 import WeightSliders from "@/components/WeightSliders";
 import ScoreBar from "@/components/ScoreBar";
@@ -22,6 +22,12 @@ const COMPONENT_LABELS: Record<keyof TrustComponents, string> = {
   promise_keeping: "Promise-keeping",
   price_fit: "Price competitiveness",
   reputation: "Reputation",
+};
+
+const REJECTION_REASON_LABELS: Record<string, string> = {
+  over_budget: "Over budget",
+  misses_deadline: "Misses deadline",
+  wrong_product_type: "Wrong product type",
 };
 
 function toOverrides(weights: TrustWeights) {
@@ -42,6 +48,7 @@ export default function MerchantDetailPage() {
   const [benchmark, setBenchmark] = useState<BenchmarkResult | null>(null);
   const [growth, setGrowth] = useState<GrowthAdvisorResult | null>(null);
   const [sla, setSla] = useState<SlaAdvisorResult | null>(null);
+  const [lostSaleSignal, setLostSaleSignal] = useState<LostSaleSignalResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -67,6 +74,10 @@ export default function MerchantDetailPage() {
 
   useEffect(() => {
     api.getSlaAdvisor(merchantId).then(setSla).catch(() => {});
+  }, [merchantId]);
+
+  useEffect(() => {
+    api.getLostSaleSignal(merchantId).then(setLostSaleSignal).catch(() => {});
   }, [merchantId]);
 
   return (
@@ -100,6 +111,7 @@ export default function MerchantDetailPage() {
           <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
           <TabsTrigger value="growth">Growth Advisor</TabsTrigger>
           <TabsTrigger value="sla">SLA Advisor</TabsTrigger>
+          <TabsTrigger value="lost-sale">Why buyers pass</TabsTrigger>
           <TabsTrigger value="readiness">Readiness</TabsTrigger>
         </TabsList>
 
@@ -115,6 +127,15 @@ export default function MerchantDetailPage() {
                 </div>
               </CardHeader>
               <CardContent>
+                {mirror.integrity.flagged && (
+                  <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+                    <div>
+                      <p className="font-medium">Under review — excluded from buyer rankings</p>
+                      <p className="mt-1 text-amber-700/90 dark:text-amber-400/90">{mirror.integrity.reason}</p>
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {(Object.keys(COMPONENT_LABELS) as (keyof TrustComponents)[]).map((key) => (
                     <ScoreBar key={key} label={COMPONENT_LABELS[key]} value={mirror.components[key]} />
@@ -208,6 +229,55 @@ export default function MerchantDetailPage() {
                         at recommended.
                       </span>
                     </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Skeleton className="h-24" />
+          )}
+        </TabsContent>
+
+        <TabsContent value="lost-sale">
+          {lostSaleSignal ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Why buyers pass on you</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Real rejection reasons from actual Buyer Agent runs that evaluated this merchant — not a synthetic
+                  benchmark, so it only reflects mandates run since this database was seeded.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {lostSaleSignal.sample_size === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No buyer-agent rejections logged yet for this merchant. This fills in as buyers evaluate and pass
+                    on it — try running a few goals on the Buyer page first.
+                  </p>
+                ) : (
+                  <>
+                    <p className="mb-3 text-sm text-muted-foreground">
+                      Based on {lostSaleSignal.sample_size} logged rejection{lostSaleSignal.sample_size === 1 ? "" : "s"}.
+                      A single rejection can carry more than one reason.
+                    </p>
+                    <div className="flex flex-col gap-3">
+                      {Object.entries(lostSaleSignal.reason_breakdown)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([reason, fraction]) => (
+                          <div key={reason} className="flex flex-col gap-1">
+                            <div className="flex items-baseline justify-between text-sm">
+                              <span className="font-medium">{REJECTION_REASON_LABELS[reason] ?? reason}</span>
+                              <span className="tabular-nums text-muted-foreground">{formatPercent(fraction)}</span>
+                            </div>
+                            <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                              <div
+                                className="h-full rounded-full bg-amber-500 transition-all"
+                                style={{ width: `${Math.min(100, fraction * 100)}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                    </div>
                   </>
                 )}
               </CardContent>
