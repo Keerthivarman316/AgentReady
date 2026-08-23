@@ -1,9 +1,12 @@
 """Generate synthetic merchants, catalog, and transaction history for AgentReady.
 
-Produces 3-5 merchants per category, each following one of four trust
-archetypes (trusted_leader / budget_reliable / flashy_risky / inconsistent)
-so the Composite Trust Engine and demo have a realistic, varied spread to
-score and rank against.
+Produces MERCHANTS_PER_CATEGORY merchants per category, cycling through six
+trust archetypes (trusted_leader / budget_reliable / flashy_risky /
+inconsistent / premium_trusted / new_entrant), each with small per-merchant
+jitter so same-archetype merchants aren't score-identical. Every merchant
+carries the category's full product catalog, so every product type (e.g.
+"earbuds") has one competing listing per merchant — real depth for the
+Buyer Agent to rank against, not just one example per category.
 
 Usage:
     python -m scripts.seed_synthetic_data --dry-run     # print summary only
@@ -16,12 +19,13 @@ import argparse
 import os
 import random
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
 SEED = 42
+MERCHANTS_PER_CATEGORY = 50
 
 CATEGORIES = ["Electronics", "Fashion", "Home & Kitchen", "Beauty & Personal Care", "Sports & Outdoors"]
 
@@ -81,7 +85,12 @@ MERCHANT_NAME_PREFIXES = [
     "Northline", "Ember", "Vertex", "Willow", "Cedar", "Halcyon", "Marlow",
     "Sundew", "Ashgrove", "Palisade", "Quill", "Rosewood", "Thistle", "Meridian",
     "Amber", "Fernbrook", "Solace", "Wrenfield", "Bayline", "Copperfield",
-    "Larkspur", "Windham",
+    "Larkspur", "Windham", "Ironwood", "Silverlake", "Brightmoor", "Hearthstone",
+    "Wildflower", "Stonebridge", "Maplewood", "Riverstone", "Goldenrod",
+    "Frostpine", "Sunhaven", "Moonvale", "Clearwater", "Timberline",
+    "Brightside", "Wavecrest", "Starling", "Foxglove", "Driftwood", "Everglade",
+    "Highmark", "Duskwood", "Silverline", "Northgate", "Eastbrook", "Westfield",
+    "Southport", "Glenmoor", "Oakhaven", "Birchwood", "Pinehurst", "Cloverdale",
 ]
 
 REASON_CODES_DELIVERY = ["item_not_delivered", "item_not_received"]
@@ -131,11 +140,31 @@ class Merchant:
     products: list[dict] = field(default_factory=list)
 
 
-def build_merchants(rng: random.Random) -> list[Merchant]:
+def _jitter(rng: random.Random, value: float, pct: float, lo: float, hi: float) -> float:
+    delta = value * pct
+    return max(lo, min(hi, value + rng.uniform(-delta, delta)))
+
+
+def _jittered_archetype(rng: random.Random, archetype: Archetype) -> Archetype:
+    """A per-merchant copy of the archetype with small random variance, so 8+
+    merchants sharing the same archetype don't all score identically."""
+    return replace(
+        archetype,
+        payment_success_rate=_jitter(rng, archetype.payment_success_rate, 0.03, lo=0.5, hi=0.995),
+        refund_rate=_jitter(rng, archetype.refund_rate, 0.25, lo=0.0, hi=0.5),
+        dispute_rate=_jitter(rng, archetype.dispute_rate, 0.25, lo=0.0, hi=0.2),
+        sla_violation_rate=_jitter(rng, archetype.sla_violation_rate, 0.25, lo=0.0, hi=0.6),
+        avg_rating=_jitter(rng, archetype.avg_rating, 0.06, lo=1.0, hi=5.0),
+        price_multiplier=_jitter(rng, archetype.price_multiplier, 0.08, lo=0.5, hi=2.0),
+    )
+
+
+def build_merchants(rng: random.Random, merchants_per_category: int = MERCHANTS_PER_CATEGORY) -> list[Merchant]:
     merchants: list[Merchant] = []
     for category in CATEGORIES:
-        names = rng.sample(MERCHANT_NAME_PREFIXES, k=len(ARCHETYPES))
-        for archetype, prefix in zip(ARCHETYPES, names):
+        names = rng.sample(MERCHANT_NAME_PREFIXES, k=merchants_per_category)
+        for i, prefix in enumerate(names):
+            archetype = _jittered_archetype(rng, ARCHETYPES[i % len(ARCHETYPES)])
             suffix = category.split(" ")[0]
             merchant = Merchant(
                 id=str(uuid.uuid4()),
@@ -144,7 +173,10 @@ def build_merchants(rng: random.Random) -> list[Merchant]:
                 declared_sla_days=rng.choice([2, 3, 4, 5]),
                 archetype=archetype,
             )
-            for prod_name, prod_desc in rng.sample(PRODUCT_POOL[category], k=4):
+            # Every merchant carries the full catalog so every product type
+            # (e.g. earbuds) has one competing listing per merchant — real
+            # depth to rank against, not a sampled subset.
+            for prod_name, prod_desc in PRODUCT_POOL[category]:
                 lo, hi = PRICE_BAND_PAISE[category]
                 base_price = rng.randint(lo, hi)
                 price = int(base_price * archetype.price_multiplier)
@@ -227,11 +259,11 @@ def build_transactions(rng: random.Random, merchant: Merchant, now: datetime):
     return transactions, refunds, disputes
 
 
-def generate_dataset():
+def generate_dataset(merchants_per_category: int = MERCHANTS_PER_CATEGORY):
     rng = random.Random(SEED)
     now = datetime.now(timezone.utc)
 
-    merchants = build_merchants(rng)
+    merchants = build_merchants(rng, merchants_per_category)
 
     all_transactions = []
     all_refunds = []
@@ -247,7 +279,7 @@ def generate_dataset():
         all_reputation.append(
             {
                 "merchant_id": merchant.id,
-                "avg_rating": round(merchant.archetype.avg_rating + rng.uniform(-0.15, 0.15), 1),
+                "avg_rating": round(max(1.0, min(5.0, merchant.archetype.avg_rating + rng.uniform(-0.15, 0.15))), 1),
                 "review_count": rng.randint(lo, hi),
             }
         )
@@ -354,16 +386,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="generate and summarize without touching the DB")
     parser.add_argument("--reset", action="store_true", help="truncate existing merchant data before inserting")
+    parser.add_argument(
+        "--merchants-per-category", type=int, default=MERCHANTS_PER_CATEGORY,
+        help=f"merchants to generate per category (default {MERCHANTS_PER_CATEGORY})",
+    )
     args = parser.parse_args()
 
-    merchants, transactions, refunds, disputes, reputation = generate_dataset()
+    merchants, transactions, refunds, disputes, reputation = generate_dataset(args.merchants_per_category)
 
-    print(f"Merchants: {len(merchants)}")
-    for m in merchants:
-        print(
-            f"  - {m.name:20s} [{m.category:15s}] archetype={m.archetype.key:16s} "
-            f"sla={m.declared_sla_days}d products={len(m.products)}"
-        )
+    print(f"Merchants: {len(merchants)} ({args.merchants_per_category} per category x {len(CATEGORIES)} categories)")
+    for category in CATEGORIES:
+        in_category = [m for m in merchants if m.category == category]
+        products_in_category = sum(len(m.products) for m in in_category)
+        print(f"  - {category:24s} merchants={len(in_category):3d} products={products_in_category:4d}")
+    print(f"Products: {sum(len(m.products) for m in merchants)}")
     print(f"Transactions: {len(transactions)}")
     print(f"Refunds: {len(refunds)}")
     print(f"Disputes: {len(disputes)}")
