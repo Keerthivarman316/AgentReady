@@ -23,7 +23,7 @@ from dotenv import load_dotenv
 
 SEED = 42
 
-CATEGORIES = ["Electronics", "Fashion", "Home & Kitchen"]
+CATEGORIES = ["Electronics", "Fashion", "Home & Kitchen", "Beauty & Personal Care", "Sports & Outdoors"]
 
 PRODUCT_POOL = {
     "Electronics": [
@@ -50,17 +50,38 @@ PRODUCT_POOL = {
         ("Ceramic Dinner Set", "16-piece ceramic dinnerware set, dishwasher safe."),
         ("LED Desk Lamp", "Dimmable LED desk lamp with USB charging port."),
     ],
+    "Beauty & Personal Care": [
+        ("Vitamin C Face Serum", "Brightening serum with 10% vitamin C and hyaluronic acid."),
+        ("Electric Hair Trimmer", "Cordless trimmer with ceramic blades and 90-min runtime."),
+        ("Argan Oil Hair Mask", "Deep conditioning hair mask, 250ml, sulfate-free."),
+        ("Sonic Facial Cleansing Brush", "Rechargeable silicone facial brush, 3 intensity levels."),
+        ("SPF 50 Sunscreen Gel", "Lightweight, non-greasy broad-spectrum sunscreen, 100g."),
+        ("Bamboo Bristle Toothbrush Set", "Pack of 4 biodegradable bamboo toothbrushes."),
+    ],
+    "Sports & Outdoors": [
+        ("Yoga Mat Pro", "6mm non-slip TPE yoga mat with carry strap."),
+        ("Adjustable Dumbbell Set", "5-25kg adjustable dumbbell pair, space-saving."),
+        ("Trekking Backpack 40L", "Water-resistant trekking backpack with rain cover."),
+        ("Insulated Water Bottle 1L", "Vacuum-insulated stainless steel bottle, 24hr cold."),
+        ("Resistance Band Set", "5-band set with door anchor and carry pouch."),
+        ("Camping Tent 2-Person", "Lightweight double-layer tent with waterproof rating 3000mm."),
+    ],
 }
 
 PRICE_BAND_PAISE = {
     "Electronics": (80_000, 400_000),
     "Fashion": (30_000, 250_000),
     "Home & Kitchen": (40_000, 300_000),
+    "Beauty & Personal Care": (15_000, 150_000),
+    "Sports & Outdoors": (50_000, 350_000),
 }
 
 MERCHANT_NAME_PREFIXES = [
     "Nova", "Bright", "Urban", "Prime", "Zenith", "Coral", "Swift", "Aster",
-    "Northline", "Ember", "Vertex", "Willow",
+    "Northline", "Ember", "Vertex", "Willow", "Cedar", "Halcyon", "Marlow",
+    "Sundew", "Ashgrove", "Palisade", "Quill", "Rosewood", "Thistle", "Meridian",
+    "Amber", "Fernbrook", "Solace", "Wrenfield", "Bayline", "Copperfield",
+    "Larkspur", "Windham",
 ]
 
 REASON_CODES_DELIVERY = ["item_not_delivered", "item_not_received"]
@@ -69,6 +90,8 @@ DISPUTE_REASON_CODES = ["item_not_delivered", "item_not_received", "item_defecti
 
 PAYMENT_METHODS = ["card", "upi", "cod"]
 PAYMENT_METHOD_WEIGHTS = [0.35, 0.45, 0.20]
+
+TXNS_PER_MERCHANT_DEFAULT = (120, 220)
 
 
 @dataclass
@@ -81,6 +104,7 @@ class Archetype:
     avg_rating: float
     review_count_range: tuple[int, int]
     price_multiplier: float
+    txn_count_range: tuple[int, int] = TXNS_PER_MERCHANT_DEFAULT
 
 
 ARCHETYPES = [
@@ -88,10 +112,13 @@ ARCHETYPES = [
     Archetype("budget_reliable", 0.93, 0.06, 0.01, 0.10, 4.1, (80, 200), 0.85),
     Archetype("flashy_risky", 0.85, 0.18, 0.06, 0.35, 4.7, (500, 1200), 1.00),
     Archetype("inconsistent", 0.89, 0.10, 0.03, 0.20, 3.6, (40, 120), 0.95),
+    Archetype("premium_trusted", 0.99, 0.015, 0.003, 0.03, 4.4, (200, 450), 1.35),
+    # Thin history on purpose — a cold-start merchant that hasn't accumulated the
+    # transaction volume the other archetypes have.
+    Archetype("new_entrant", 0.91, 0.08, 0.02, 0.15, 3.9, (10, 40), 0.90, txn_count_range=(15, 35)),
 ]
 
-TXNS_PER_MERCHANT = (40, 80)
-HISTORY_DAYS = 90
+HISTORY_DAYS = 180
 
 
 @dataclass
@@ -117,7 +144,7 @@ def build_merchants(rng: random.Random) -> list[Merchant]:
                 declared_sla_days=rng.choice([2, 3, 4, 5]),
                 archetype=archetype,
             )
-            for prod_name, prod_desc in rng.sample(PRODUCT_POOL[category], k=2):
+            for prod_name, prod_desc in rng.sample(PRODUCT_POOL[category], k=4):
                 lo, hi = PRICE_BAND_PAISE[category]
                 base_price = rng.randint(lo, hi)
                 price = int(base_price * archetype.price_multiplier)
@@ -138,7 +165,7 @@ def build_transactions(rng: random.Random, merchant: Merchant, now: datetime):
     refunds = []
     disputes = []
 
-    n = rng.randint(*TXNS_PER_MERCHANT)
+    n = rng.randint(*merchant.archetype.txn_count_range)
     for _ in range(n):
         product = rng.choice(merchant.products)
         order_created_at = now - timedelta(
@@ -228,7 +255,7 @@ def generate_dataset():
     return merchants, all_transactions, all_refunds, all_disputes, all_reputation
 
 
-def insert_dataset(merchants, transactions, refunds, disputes, reputation):
+def insert_dataset(merchants, transactions, refunds, disputes, reputation, reset: bool = False):
     import psycopg
 
     load_dotenv()
@@ -236,6 +263,13 @@ def insert_dataset(merchants, transactions, refunds, disputes, reputation):
 
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
+            if reset:
+                # Cascades to products, transactions, refunds, disputes, reputation,
+                # and trust_score_history via their ON DELETE CASCADE FKs — makes
+                # re-running the generator while tuning archetypes/volume safe
+                # instead of duplicating merchants on every run.
+                cur.execute("TRUNCATE merchants CASCADE")
+
             category_ids = {}
             for name in CATEGORIES:
                 cur.execute(
@@ -319,6 +353,7 @@ def insert_dataset(merchants, transactions, refunds, disputes, reputation):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", help="generate and summarize without touching the DB")
+    parser.add_argument("--reset", action="store_true", help="truncate existing merchant data before inserting")
     args = parser.parse_args()
 
     merchants, transactions, refunds, disputes, reputation = generate_dataset()
@@ -338,7 +373,7 @@ def main():
         print("\n--dry-run set: nothing written to the database.")
         return
 
-    insert_dataset(merchants, transactions, refunds, disputes, reputation)
+    insert_dataset(merchants, transactions, refunds, disputes, reputation, reset=args.reset)
     print("\nInserted synthetic dataset into DATABASE_URL.")
 
 
