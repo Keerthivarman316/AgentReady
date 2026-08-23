@@ -18,6 +18,8 @@ export default function BuyerPage() {
   const [loading, setLoading] = useState<"intent" | "preview" | "purchase" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [simulateTopFailure, setSimulateTopFailure] = useState(false);
+  const [buyingProductId, setBuyingProductId] = useState<string | null>(null);
+  const [productCheckouts, setProductCheckouts] = useState<Record<string, CheckoutResult | null>>({});
 
   async function submitIntent() {
     setLoading("intent");
@@ -27,6 +29,7 @@ export default function BuyerPage() {
       setMandate(result);
       setDecision(null);
       setCheckout(null);
+      setProductCheckouts({});
       const preview = await api.rankPreview(result.mandate_id, toOverrides(weights));
       setDecision(preview.decision);
     } catch (e) {
@@ -63,6 +66,20 @@ export default function BuyerPage() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(null);
+    }
+  }
+
+  async function buyProduct(productId: string) {
+    if (!mandate) return;
+    setBuyingProductId(productId);
+    setError(null);
+    try {
+      const result = await api.purchase(mandate.mandate_id, toOverrides(weights), undefined, productId);
+      setProductCheckouts((prev) => ({ ...prev, [productId]: result.checkout }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBuyingProductId(null);
     }
   }
 
@@ -159,7 +176,14 @@ export default function BuyerPage() {
           ) : (
             <div className="mt-3 flex flex-col gap-3">
               {decision.ranking.map((candidate, idx) => (
-                <CandidateCard key={candidate.product_id} candidate={candidate} rank={idx + 1} />
+                <CandidateCard
+                  key={candidate.product_id}
+                  candidate={candidate}
+                  rank={idx + 1}
+                  onBuy={() => buyProduct(candidate.product_id)}
+                  buying={buyingProductId === candidate.product_id}
+                  result={productCheckouts[candidate.product_id]}
+                />
               ))}
             </div>
           )}
@@ -183,7 +207,19 @@ export default function BuyerPage() {
   );
 }
 
-function CandidateCard({ candidate, rank }: { candidate: RankedCandidate; rank: number }) {
+function CandidateCard({
+  candidate,
+  rank,
+  onBuy,
+  buying,
+  result,
+}: {
+  candidate: RankedCandidate;
+  rank: number;
+  onBuy: () => void;
+  buying: boolean;
+  result: CheckoutResult | null | undefined;
+}) {
   return (
     <div className="rounded-md border border-gray-200 p-3">
       <div className="flex items-baseline justify-between">
@@ -205,6 +241,20 @@ function CandidateCard({ candidate, rank }: { candidate: RankedCandidate; rank: 
           <ScoreBar label="Reputation" value={candidate.trust_components.reputation} />
         </div>
       )}
+      <div className="mt-2 flex items-center justify-between">
+        <button
+          onClick={onBuy}
+          disabled={buying}
+          className="rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+        >
+          {buying ? "Buying…" : "Buy this"}
+        </button>
+        {result && (
+          <span className={result.status === "success" ? "text-xs text-emerald-700" : "text-xs text-red-700"}>
+            {result.status === "success" ? `Purchased — order ${result.order?.id}` : "Checkout failed"}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

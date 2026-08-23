@@ -202,6 +202,7 @@ class PurchaseRequest(BaseModel):
     w_price_fit: float | None = None
     w_reputation: float | None = None
     simulate_failure_rank: int | None = None
+    product_id: str | None = None
 
 
 @app.post("/buyer/rank-preview")
@@ -264,8 +265,16 @@ def purchase(req: PurchaseRequest):
             conn.commit()
             return {"mandate_id": mandate["id"], "decision": decision, "checkout": None}
 
+        ranking = decision["ranking"]
+        if req.product_id is not None:
+            # Manual "buy this one" flow: attempt only the selected candidate, with
+            # no fallback cascade to the rest of the ranking.
+            ranking = [c for c in ranking if c["product_id"] == req.product_id]
+            if not ranking:
+                raise HTTPException(status_code=404, detail="product not in this mandate's ranked candidates")
+
         force_fail_ranks = {req.simulate_failure_rank} if req.simulate_failure_rank is not None else None
-        checkout_result = checkout_with_fallback(cur, mandate["id"], decision["ranking"], force_fail_ranks=force_fail_ranks)
+        checkout_result = checkout_with_fallback(cur, mandate["id"], ranking, force_fail_ranks=force_fail_ranks)
 
         new_status = "fulfilled" if checkout_result["status"] == "success" else "active"
         cur.execute("UPDATE mandates SET status = %s WHERE id = %s", (new_status, mandate["id"]))
