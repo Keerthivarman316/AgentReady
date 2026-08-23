@@ -5,13 +5,21 @@ mandate — no re-prompting the human — and logs every attempt and failure.
 
 `force_fail_ranks` exists solely to make that failure/fallback path
 demoable on command: without it, a failure only happens when Razorpay
-itself rejects the order (or isn't configured), which isn't something a
-live demo can reliably trigger on cue.
+itself rejects the order, which isn't something a live demo can reliably
+trigger on cue.
+
+When RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET aren't configured, checkout runs in
+demo mode: it simulates a *successful* order instead of hard-failing every
+attempt, so the purchase flow is demoable without a Razorpay account. Every
+simulated order is marked `"simulated": true` on the order and in the audit
+log — nothing pretends to be a real payment. The moment real keys are set,
+this path is never taken; every order goes through the real (test-mode) API.
 """
 
 from __future__ import annotations
 
 import os
+import uuid
 
 import razorpay
 
@@ -20,6 +28,10 @@ from app.audit_trail import log_audit
 
 class SimulatedCheckoutFailure(Exception):
     """Raised in place of a real checkout attempt for a rank in force_fail_ranks."""
+
+
+def is_razorpay_configured() -> bool:
+    return bool(os.environ.get("RAZORPAY_KEY_ID")) and bool(os.environ.get("RAZORPAY_KEY_SECRET"))
 
 
 def get_razorpay_client() -> razorpay.Client:
@@ -31,13 +43,23 @@ def get_razorpay_client() -> razorpay.Client:
 
 
 def create_test_order(candidate: dict, receipt: str) -> dict:
+    if not is_razorpay_configured():
+        return {
+            "id": f"sim_{uuid.uuid4().hex[:16]}",
+            "amount": candidate["price_paise"],
+            "currency": "INR",
+            "receipt": receipt,
+            "status": "created",
+            "simulated": True,
+        }
     client = get_razorpay_client()
-    return client.order.create({
+    order = client.order.create({
         "amount": candidate["price_paise"],
         "currency": "INR",
         "receipt": receipt,
         "payment_capture": 1,
     })
+    return {**order, "simulated": False}
 
 
 def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], create_order_fn=None,
@@ -68,6 +90,7 @@ def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], 
 
         log_audit(cur, mandate_id, "checkout_success", {
             "rank": rank, "merchant_name": candidate["merchant_name"], "order_id": order.get("id"),
+            "simulated": bool(order.get("simulated")),
         })
         return {
             "status": "success", "rank": rank,

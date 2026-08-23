@@ -1,6 +1,6 @@
 import json
 
-from app.checkout import checkout_with_fallback
+from app.checkout import checkout_with_fallback, create_test_order, is_razorpay_configured
 
 
 class FakeCursor:
@@ -104,3 +104,39 @@ def test_checkout_force_fail_ranks_marks_failure_as_simulated():
     ]
     assert len(failure_payloads) == 1
     assert failure_payloads[0]["simulated"] is True
+
+
+def test_create_test_order_simulates_success_when_razorpay_not_configured(monkeypatch):
+    monkeypatch.delenv("RAZORPAY_KEY_ID", raising=False)
+    monkeypatch.delenv("RAZORPAY_KEY_SECRET", raising=False)
+
+    assert is_razorpay_configured() is False
+
+    order = create_test_order(_candidate("a"), receipt="mandate-1-a")
+
+    assert order["simulated"] is True
+    assert order["id"].startswith("sim_")
+    assert order["amount"] == 1000
+
+
+def test_is_razorpay_configured_true_when_both_keys_present(monkeypatch):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_x")
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", "secret_x")
+    assert is_razorpay_configured() is True
+
+
+def test_is_razorpay_configured_false_when_only_one_key_present(monkeypatch):
+    monkeypatch.setenv("RAZORPAY_KEY_ID", "rzp_test_x")
+    monkeypatch.delenv("RAZORPAY_KEY_SECRET", raising=False)
+    assert is_razorpay_configured() is False
+
+
+def test_checkout_success_marks_simulated_flag_from_order():
+    cur = FakeCursor()
+    candidates = [_candidate("a")]
+    checkout_with_fallback(cur, "mandate-1", candidates, create_order_fn=lambda c: {"id": "sim_x", "simulated": True})
+
+    success_payloads = [
+        json.loads(call[1][2]) for call in cur.calls if call[1][1] == "checkout_success"
+    ]
+    assert success_payloads[0]["simulated"] is True

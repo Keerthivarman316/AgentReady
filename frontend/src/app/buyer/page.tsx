@@ -69,8 +69,15 @@ export default function BuyerPage() {
       setDecision(result.decision);
       setCheckout(result.checkout);
       if (result.checkout?.status === "success") {
+        const fellBack = (result.checkout.rank ?? 0) > 0;
+        const simulated = result.checkout.order?.simulated;
         toast.success(`Purchased at rank ${(result.checkout.rank ?? 0) + 1}`, {
-          description: (result.checkout.rank ?? 0) > 0 ? "Top choice failed — agent fell back automatically." : undefined,
+          description: [
+            fellBack && "Top choice failed — agent fell back automatically.",
+            simulated && "Demo order (Razorpay not configured) — no real payment.",
+          ]
+            .filter(Boolean)
+            .join(" ") || undefined,
         });
       } else if (result.checkout) {
         toast.error(`Checkout exhausted all ${result.checkout.attempted} candidates`);
@@ -90,7 +97,11 @@ export default function BuyerPage() {
       const result = await api.purchase(mandate.mandate_id, toOverrides(weights), undefined, productId);
       setProductCheckouts((prev) => ({ ...prev, [productId]: result.checkout }));
       if (result.checkout?.status === "success") {
-        toast.success(`Purchased ${productName}`, { description: `Order ${result.checkout.order?.id}` });
+        toast.success(`Purchased ${productName}`, {
+          description: result.checkout.order?.simulated
+            ? `Demo order ${result.checkout.order?.id} — Razorpay not configured, no real payment.`
+            : `Order ${result.checkout.order?.id}`,
+        });
       } else {
         toast.error(`Checkout failed for ${productName}`);
       }
@@ -221,10 +232,17 @@ export default function BuyerPage() {
           </CardHeader>
           <CardContent>
             {checkout.status === "success" ? (
-              <p className="text-sm text-emerald-600 dark:text-emerald-400">
-                Success at rank {(checkout.rank ?? 0) + 1} — order {checkout.order?.id}.
-                {(checkout.rank ?? 0) > 0 && " The top choice failed and the agent fell back automatically — see the audit trail."}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm text-emerald-600 dark:text-emerald-400">
+                  Success at rank {(checkout.rank ?? 0) + 1} — order {checkout.order?.id}.
+                  {(checkout.rank ?? 0) > 0 && " The top choice failed and the agent fell back automatically — see the audit trail."}
+                </p>
+                {checkout.order?.simulated && (
+                  <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    Demo order — Razorpay not configured
+                  </Badge>
+                )}
+              </div>
             ) : (
               <p className="text-sm text-destructive">
                 Exhausted all {checkout.attempted} candidates — none completed checkout.
@@ -279,7 +297,9 @@ function CandidateCard({
         </Button>
         {result && (
           <span className={result.status === "success" ? "text-xs text-emerald-600 dark:text-emerald-400" : "text-xs text-destructive"}>
-            {result.status === "success" ? `Purchased — order ${result.order?.id}` : "Checkout failed"}
+            {result.status === "success"
+              ? `Purchased — ${result.order?.simulated ? "demo order" : "order"} ${result.order?.id}`
+              : "Checkout failed"}
           </span>
         )}
       </div>

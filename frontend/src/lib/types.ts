@@ -127,7 +127,7 @@ export interface CheckoutResult {
   rank?: number;
   merchant_id?: string;
   product_id?: string;
-  order?: { id: string };
+  order?: { id: string; simulated?: boolean };
   attempted?: number;
 }
 
