@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 
 const SURFACES = [
   {
@@ -24,21 +25,21 @@ const SURFACES = [
 export default function Home() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-16">
-      <h1 className="text-3xl font-semibold tracking-tight text-gray-900">AgentReady</h1>
-      <p className="mt-3 max-w-2xl text-gray-600">
+      <h1 className="text-3xl font-semibold tracking-tight">AgentReady</h1>
+      <p className="mt-3 max-w-2xl text-muted-foreground">
         A trust and growth layer for agentic commerce — where an AI buyer can verify who
         it&apos;s trusting, and an AI-ready merchant can grow because of it.
       </p>
 
       <div className="mt-10 grid gap-6 sm:grid-cols-3">
         {SURFACES.map((surface) => (
-          <Link
-            key={surface.href}
-            href={surface.href}
-            className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white p-5 transition-shadow hover:shadow-md"
-          >
-            <span className="text-lg font-medium text-gray-900">{surface.title}</span>
-            <span className="text-sm text-gray-600">{surface.description}</span>
+          <Link key={surface.href} href={surface.href} className="group">
+            <Card className="h-full transition-shadow group-hover:shadow-md">
+              <CardHeader>
+                <CardTitle className="text-lg">{surface.title}</CardTitle>
+                <CardDescription>{surface.description}</CardDescription>
+              </CardHeader>
+            </Card>
           </Link>
         ))}
       </div>

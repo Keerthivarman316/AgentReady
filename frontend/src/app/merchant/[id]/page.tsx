@@ -3,10 +3,18 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, formatPercent, formatScore } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { BenchmarkResult, GrowthAdvisorResult, SlaAdvisorResult, TrustComponents, TrustMirrorResult, TrustWeights, WhatIfResult } from "@/lib/types";
 import { DEFAULT_WEIGHTS } from "@/lib/weights";
 import WeightSliders from "@/components/WeightSliders";
 import ScoreBar from "@/components/ScoreBar";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 const COMPONENT_LABELS: Record<keyof TrustComponents, string> = {
   payment_trust: "Payment trust",
@@ -62,115 +70,163 @@ export default function MerchantDetailPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold text-gray-900">Trust Mirror</h1>
-      <p className="mt-1 text-sm text-gray-600">
+      <h1 className="text-2xl font-semibold tracking-tight">Trust Mirror</h1>
+      <p className="mt-1 text-sm text-muted-foreground">
         Exactly what the Buyer Agent sees for this merchant, plus its position against the category and a ranked fix list.
       </p>
 
       {error && (
-        <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+        <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {error} — is the backend running and the database seeded?
         </div>
       )}
 
-      <section className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
-        <h2 className="text-sm font-semibold text-gray-900">Weights</h2>
-        <div className="mt-3">
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle>Weights</CardTitle>
+        </CardHeader>
+        <CardContent>
           <WeightSliders weights={weights} onChange={setWeights} />
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
-      {mirror && (
-        <section className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-sm font-semibold text-gray-900">Composite score {loading && <span className="text-gray-400">(recomputing…)</span>}</h2>
-            <span className="text-lg font-semibold tabular-nums text-gray-900">{formatScore(mirror.composite_score)}</span>
-          </div>
-          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {(Object.keys(COMPONENT_LABELS) as (keyof TrustComponents)[]).map((key) => (
-              <ScoreBar key={key} label={COMPONENT_LABELS[key]} value={mirror.components[key]} />
-            ))}
-          </div>
-          <p className="mt-3 text-xs text-gray-500">
-            Weakest signal: <span className="font-medium">{COMPONENT_LABELS[mirror.weakest_signal]}</span> · Strongest:{" "}
-            <span className="font-medium">{COMPONENT_LABELS[mirror.strongest_signal]}</span>
-          </p>
-        </section>
-      )}
+      <Tabs defaultValue="mirror" className="mt-6">
+        <TabsList className="w-full sm:w-auto">
+          <TabsTrigger value="mirror">Trust Mirror</TabsTrigger>
+          <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
+          <TabsTrigger value="growth">Growth Advisor</TabsTrigger>
+          <TabsTrigger value="sla">SLA Advisor</TabsTrigger>
+          <TabsTrigger value="readiness">Readiness</TabsTrigger>
+        </TabsList>
 
-      {benchmark && (
-        <section className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
-          <h2 className="text-sm font-semibold text-gray-900">Benchmark</h2>
-          <p className="mt-2 text-sm text-gray-700">
-            Rank <span className="font-medium">{benchmark.rank}</span> of {benchmark.total_in_category} in category ·
-            category median {formatScore(benchmark.category_median_score)} · gap{" "}
-            <span className={benchmark.gap_to_median !== null && benchmark.gap_to_median < 0 ? "text-red-600" : "text-emerald-600"}>
-              {benchmark.gap_to_median !== null ? formatScore(benchmark.gap_to_median) : "n/a"}
-            </span>
-          </p>
-        </section>
-      )}
-
-      {growth && (
-        <section className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
-          <h2 className="text-sm font-semibold text-gray-900">Growth Advisor</h2>
-          {growth.fixes.length === 0 ? (
-            <p className="mt-2 text-sm text-emerald-700">No component sits below the category median — nothing to fix.</p>
+        <TabsContent value="mirror">
+          {mirror ? (
+            <Card>
+              <CardHeader>
+                <div className="flex items-baseline justify-between">
+                  <CardTitle>
+                    Composite score {loading && <span className="font-normal text-muted-foreground">(recomputing…)</span>}
+                  </CardTitle>
+                  <span className="text-lg font-semibold tabular-nums">{formatScore(mirror.composite_score)}</span>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {(Object.keys(COMPONENT_LABELS) as (keyof TrustComponents)[]).map((key) => (
+                    <ScoreBar key={key} label={COMPONENT_LABELS[key]} value={mirror.components[key]} />
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Weakest signal: <span className="font-medium text-foreground">{COMPONENT_LABELS[mirror.weakest_signal]}</span> · Strongest:{" "}
+                  <span className="font-medium text-foreground">{COMPONENT_LABELS[mirror.strongest_signal]}</span>
+                </p>
+              </CardContent>
+            </Card>
           ) : (
-            <ul className="mt-2 flex flex-col gap-3">
-              {growth.fixes.map((fix) => (
-                <li key={fix.component} className="rounded-md border border-gray-100 bg-gray-50 p-3 text-sm">
-                  <div className="flex items-baseline justify-between">
-                    <span className="font-medium text-gray-900">{COMPONENT_LABELS[fix.component]}</span>
-                    <span className="text-xs text-gray-500">
-                      {formatScore(fix.merchant_value)} vs median {formatScore(fix.category_median)} · impact {formatScore(fix.impact)}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-gray-600">{fix.message}</p>
-                </li>
-              ))}
-            </ul>
+            <Skeleton className="h-40" />
           )}
-          {growth.fixes.length > 0 && <WhatIfSimulator merchantId={merchantId} weights={weights} fixes={growth.fixes} />}
-        </section>
-      )}
+        </TabsContent>
 
-      {sla && (
-        <section className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
-          <h2 className="text-sm font-semibold text-gray-900">SLA Advisor</h2>
-          {sla.assessment === "insufficient_data" ? (
-            <p className="mt-2 text-sm text-gray-500">Not enough COD history yet to recommend an SLA.</p>
+        <TabsContent value="benchmark">
+          {benchmark ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Benchmark</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm">
+                  Rank <span className="font-medium">{benchmark.rank}</span> of {benchmark.total_in_category} in category ·
+                  category median {formatScore(benchmark.category_median_score)} · gap{" "}
+                  <span className={benchmark.gap_to_median !== null && benchmark.gap_to_median < 0 ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>
+                    {benchmark.gap_to_median !== null ? formatScore(benchmark.gap_to_median) : "n/a"}
+                  </span>
+                </p>
+              </CardContent>
+            </Card>
           ) : (
-            <>
-              <p className="mt-2 text-sm text-gray-700">
-                Declares <span className="font-medium">{sla.current_declared_sla_days}d</span>, recommend{" "}
-                <span className="font-medium">{sla.recommended_sla_days}d</span> based on{" "}
-                {sla.sample_size} historical COD deliveries (median actual {sla.median_actual_delivery_days}d).
-              </p>
-              <p className="mt-1 text-sm">
-                <AssessmentBadge assessment={sla.assessment} />
-                <span className="ml-2 text-gray-500">
-                  violation rate {sla.current_violation_rate !== undefined ? formatPercent(sla.current_violation_rate) : "n/a"} at
-                  current declaration, {sla.projected_violation_rate !== undefined ? formatPercent(sla.projected_violation_rate) : "n/a"}{" "}
-                  at recommended.
-                </span>
-              </p>
-            </>
+            <Skeleton className="h-20" />
           )}
-        </section>
-      )}
+        </TabsContent>
 
-      <ReadinessChecker merchantId={merchantId} />
+        <TabsContent value="growth">
+          {growth ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>Growth Advisor</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {growth.fixes.length === 0 ? (
+                  <p className="text-sm text-emerald-600 dark:text-emerald-400">No component sits below the category median — nothing to fix.</p>
+                ) : (
+                  <ul className="flex flex-col gap-3">
+                    {growth.fixes.map((fix) => (
+                      <li key={fix.component} className="rounded-md border bg-muted/50 p-3 text-sm">
+                        <div className="flex items-baseline justify-between">
+                          <span className="font-medium">{COMPONENT_LABELS[fix.component]}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {formatScore(fix.merchant_value)} vs median {formatScore(fix.category_median)} · impact {formatScore(fix.impact)}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-muted-foreground">{fix.message}</p>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {growth.fixes.length > 0 && <WhatIfSimulator merchantId={merchantId} weights={weights} fixes={growth.fixes} />}
+              </CardContent>
+            </Card>
+          ) : (
+            <Skeleton className="h-32" />
+          )}
+        </TabsContent>
+
+        <TabsContent value="sla">
+          {sla ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>SLA Advisor</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {sla.assessment === "insufficient_data" ? (
+                  <p className="text-sm text-muted-foreground">Not enough COD history yet to recommend an SLA.</p>
+                ) : (
+                  <>
+                    <p className="text-sm">
+                      Declares <span className="font-medium">{sla.current_declared_sla_days}d</span>, recommend{" "}
+                      <span className="font-medium">{sla.recommended_sla_days}d</span> based on{" "}
+                      {sla.sample_size} historical COD deliveries (median actual {sla.median_actual_delivery_days}d).
+                    </p>
+                    <p className="mt-2 flex items-center gap-2 text-sm">
+                      <AssessmentBadge assessment={sla.assessment} />
+                      <span className="text-muted-foreground">
+                        violation rate {sla.current_violation_rate !== undefined ? formatPercent(sla.current_violation_rate) : "n/a"} at
+                        current declaration, {sla.projected_violation_rate !== undefined ? formatPercent(sla.projected_violation_rate) : "n/a"}{" "}
+                        at recommended.
+                      </span>
+                    </p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Skeleton className="h-24" />
+          )}
+        </TabsContent>
+
+        <TabsContent value="readiness">
+          <ReadinessChecker merchantId={merchantId} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
 function AssessmentBadge({ assessment }: { assessment: SlaAdvisorResult["assessment"] }) {
   const styles: Record<string, string> = {
-    over_promising: "bg-red-100 text-red-700",
-    under_promising: "bg-amber-100 text-amber-700",
-    well_calibrated: "bg-emerald-100 text-emerald-700",
-    insufficient_data: "bg-gray-100 text-gray-600",
+    over_promising: "bg-red-500/10 text-red-600 dark:text-red-400",
+    under_promising: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    well_calibrated: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    insufficient_data: "bg-muted text-muted-foreground",
   };
   const text: Record<string, string> = {
     over_promising: "Over-promising",
@@ -178,7 +234,7 @@ function AssessmentBadge({ assessment }: { assessment: SlaAdvisorResult["assessm
     well_calibrated: "Well-calibrated",
     insufficient_data: "Insufficient data",
   };
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${styles[assessment]}`}>{text[assessment]}</span>;
+  return <Badge variant="outline" className={cn("border-transparent", styles[assessment])}>{text[assessment]}</Badge>;
 }
 
 function WhatIfSimulator({
@@ -210,13 +266,13 @@ function WhatIfSimulator({
   }
 
   return (
-    <div className="mt-4 rounded-md border border-indigo-100 bg-indigo-50 p-3">
-      <h3 className="text-sm font-semibold text-indigo-900">What-if simulator</h3>
+    <div className="mt-4 rounded-md border border-primary/20 bg-accent p-3">
+      <h3 className="text-sm font-semibold text-accent-foreground">What-if simulator</h3>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
         <select
           value={component}
           onChange={(e) => setComponent(e.target.value as keyof TrustComponents)}
-          className="rounded-md border border-gray-300 px-2 py-1"
+          className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           {fixes.map((f) => (
             <option key={f.component} value={f.component}>
@@ -224,27 +280,23 @@ function WhatIfSimulator({
             </option>
           ))}
         </select>
-        <span className="text-gray-500">→ target</span>
-        <input
+        <span className="text-muted-foreground">→ target</span>
+        <Input
           type="number"
           min={0}
           max={1}
           step={0.05}
           value={targetValue}
           onChange={(e) => setTargetValue(Number(e.target.value))}
-          className="w-20 rounded-md border border-gray-300 px-2 py-1"
+          className="w-20"
         />
-        <button
-          onClick={simulate}
-          disabled={loading}
-          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
+        <Button onClick={simulate} disabled={loading} size="sm">
           {loading ? "Simulating…" : "Simulate"}
-        </button>
+        </Button>
       </div>
-      {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       {result && (
-        <p className="mt-2 text-sm text-indigo-900">
+        <p className="mt-2 text-sm">
           Rank <span className="font-medium">{result.before_rank}</span> → <span className="font-medium">{result.after_rank}</span> of{" "}
           {result.total_in_category} (score {formatScore(result.before_score)} → {formatScore(result.after_score)})
         </p>
@@ -276,40 +328,35 @@ function ReadinessChecker({ merchantId }: { merchantId: string }) {
   }
 
   return (
-    <section className="mt-6 rounded-lg border border-gray-200 bg-white p-5">
-      <h2 className="text-sm font-semibold text-gray-900">Readiness Agent — catalog check</h2>
-      <p className="mt-1 text-xs text-gray-500">Paste one raw, marketing-style catalog line per item.</p>
-      <textarea
-        className="mt-2 w-full rounded-md border border-gray-300 p-2 text-sm"
-        rows={3}
-        value={raw}
-        onChange={(e) => setRaw(e.target.value)}
-      />
-      <button
-        onClick={check}
-        disabled={loading}
-        className="mt-2 rounded-md bg-gray-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-900 disabled:opacity-50"
-      >
-        {loading ? "Checking…" : "Check readiness"}
-      </button>
-      {error && <p className="mt-2 text-xs text-red-700">{error}</p>}
-      {result && (
-        <div className="mt-3 flex flex-col gap-2">
-          <p className="text-sm text-gray-700">
-            Overall readiness: <span className="font-medium">{formatScore(result.overall_readiness_score)}</span>
-          </p>
-          {result.items.map((item, idx) => (
-            <div key={idx} className="rounded-md border border-gray-100 bg-gray-50 p-2 text-xs">
-              <p className="text-gray-700">{item.raw_text}</p>
-              {item.gaps.length > 0 ? (
-                <p className="mt-1 text-amber-700">Gaps: {item.gaps.join("; ")}</p>
-              ) : (
-                <p className="mt-1 text-emerald-700">Fully structured.</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
+    <Card>
+      <CardHeader>
+        <CardTitle>Readiness Agent — catalog check</CardTitle>
+        <p className="text-xs text-muted-foreground">Paste one raw, marketing-style catalog line per item.</p>
+      </CardHeader>
+      <CardContent>
+        <Textarea rows={3} value={raw} onChange={(e) => setRaw(e.target.value)} />
+        <Button onClick={check} disabled={loading} variant="secondary" size="sm" className="mt-2">
+          {loading ? "Checking…" : "Check readiness"}
+        </Button>
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+        {result && (
+          <div className="mt-3 flex flex-col gap-2">
+            <p className="text-sm">
+              Overall readiness: <span className="font-medium">{formatScore(result.overall_readiness_score)}</span>
+            </p>
+            {result.items.map((item, idx) => (
+              <div key={idx} className="rounded-md border bg-muted/50 p-2 text-xs">
+                <p>{item.raw_text}</p>
+                {item.gaps.length > 0 ? (
+                  <p className="mt-1 text-amber-600 dark:text-amber-400">Gaps: {item.gaps.join("; ")}</p>
+                ) : (
+                  <p className="mt-1 text-emerald-600 dark:text-emerald-400">Fully structured.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

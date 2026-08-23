@@ -13,13 +13,13 @@ export default function ScoreBar({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-baseline justify-between text-sm">
-        <span className="font-medium text-gray-700">{label}</span>
-        <span className="tabular-nums text-gray-500">
+        <span className="font-medium text-foreground">{label}</span>
+        <span className="tabular-nums text-muted-foreground">
           {value.toFixed(3)}
-          {sublabel ? <span className="ml-1 text-gray-400">{sublabel}</span> : null}
+          {sublabel ? <span className="ml-1 text-muted-foreground/70">{sublabel}</span> : null}
         </span>
       </div>
-      <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+      <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
         <div className={`h-full rounded-full ${color} transition-all`} style={{ width: `${pct}%` }} />
       </div>
     </div>

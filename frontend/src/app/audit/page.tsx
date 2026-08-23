@@ -4,6 +4,10 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { AuditEntry } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const LAYER_LABELS: Record<string, string> = {
   intent: "Intent",
@@ -19,9 +23,9 @@ const LAYER_LABELS: Record<string, string> = {
 };
 
 const LAYER_STYLES: Record<string, string> = {
-  checkout_failure: "border-red-200 bg-red-50",
-  checkout_fallback: "border-amber-200 bg-amber-50",
-  checkout_success: "border-emerald-200 bg-emerald-50",
+  checkout_failure: "border-red-500/30 bg-red-500/5",
+  checkout_fallback: "border-amber-500/30 bg-amber-500/5",
+  checkout_success: "border-emerald-500/30 bg-emerald-500/5",
 };
 
 function AuditTrailContent() {
@@ -54,42 +58,46 @@ function AuditTrailContent() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold text-gray-900">Audit trail</h1>
-      <p className="mt-1 text-sm text-gray-600">
+      <h1 className="text-2xl font-semibold tracking-tight">Audit trail</h1>
+      <p className="mt-1 text-sm text-muted-foreground">
         Every Buyer Agent decision layer and checkout attempt for a mandate, in order.
       </p>
 
       <div className="mt-6 flex gap-2">
-        <input
+        <Input
           value={mandateId}
           onChange={(e) => setMandateId(e.target.value)}
           placeholder="mandate id"
-          className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm"
+          className="h-auto flex-1 py-2"
         />
-        <button
-          onClick={() => load(mandateId)}
-          disabled={loading}
-          className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
+        <Button onClick={() => load(mandateId)} disabled={loading}>
           {loading ? "Loading…" : "Load"}
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+        <div className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
       )}
 
-      {entries && entries.length === 0 && <p className="mt-6 text-sm text-gray-500">No audit entries for this mandate yet.</p>}
+      {loading && !entries && (
+        <div className="mt-6 flex flex-col gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 rounded-md" />
+          ))}
+        </div>
+      )}
+
+      {entries && entries.length === 0 && <p className="mt-6 text-sm text-muted-foreground">No audit entries for this mandate yet.</p>}
 
       {entries && entries.length > 0 && (
         <ol className="mt-6 flex flex-col gap-3">
           {entries.map((entry, idx) => (
-            <li key={idx} className={`rounded-md border p-3 ${LAYER_STYLES[entry.layer] ?? "border-gray-200 bg-white"}`}>
+            <li key={idx} className={cn("rounded-md border p-3", LAYER_STYLES[entry.layer])}>
               <div className="flex items-baseline justify-between">
-                <span className="text-sm font-semibold text-gray-900">{LAYER_LABELS[entry.layer] ?? entry.layer}</span>
-                <span className="text-xs text-gray-400">{new Date(entry.created_at).toLocaleTimeString()}</span>
+                <span className="text-sm font-semibold">{LAYER_LABELS[entry.layer] ?? entry.layer}</span>
+                <span className="text-xs text-muted-foreground">{new Date(entry.created_at).toLocaleTimeString()}</span>
               </div>
-              <pre className="mt-2 overflow-x-auto rounded bg-gray-900/5 p-2 text-xs text-gray-700">
+              <pre className="mt-2 overflow-x-auto rounded bg-foreground/5 p-2 text-xs text-muted-foreground">
                 {JSON.stringify(entry.payload, null, 2)}
               </pre>
             </li>
@@ -102,7 +110,7 @@ function AuditTrailContent() {
 
 export default function AuditTrailPage() {
   return (
-    <Suspense fallback={<div className="mx-auto max-w-4xl px-6 py-10 text-sm text-gray-500">Loading…</div>}>
+    <Suspense fallback={<div className="mx-auto max-w-4xl px-6 py-10 text-sm text-muted-foreground">Loading…</div>}>
       <AuditTrailContent />
     </Suspense>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import type { TrustWeights } from "@/lib/types";
+import { Slider } from "@/components/ui/slider";
 
 const LABELS: Record<keyof TrustWeights, string> = {
   payment_trust: "Payment trust",
@@ -25,26 +26,24 @@ export default function WeightSliders({
   return (
     <div className="flex flex-col gap-3">
       {(Object.keys(LABELS) as (keyof TrustWeights)[]).map((key) => (
-        <div key={key} className="flex flex-col gap-1">
+        <div key={key} className="flex flex-col gap-2">
           <div className="flex items-baseline justify-between text-sm">
-            <span className="text-gray-700">{LABELS[key]}</span>
-            <span className="tabular-nums text-gray-500">
+            <span className="text-foreground">{LABELS[key]}</span>
+            <span className="tabular-nums text-muted-foreground">
               {weights[key].toFixed(2)}
-              {key === "reputation" ? <span className="ml-1 text-gray-400">(capped at {REPUTATION_CAP})</span> : null}
+              {key === "reputation" ? <span className="ml-1 text-muted-foreground/70">(capped at {REPUTATION_CAP})</span> : null}
             </span>
           </div>
-          <input
-            type="range"
+          <Slider
             min={0}
             max={1}
             step={0.05}
-            value={weights[key]}
-            onChange={(e) => update(key, Number(e.target.value))}
-            className="w-full accent-indigo-600"
+            value={[weights[key]]}
+            onValueChange={(value) => update(key, Array.isArray(value) ? value[0] : value)}
           />
         </div>
       ))}
-      <p className="text-xs text-gray-400">
+      <p className="text-xs text-muted-foreground/70">
         Weights are renormalized server-side to sum to 1; reputation is hard-capped at {REPUTATION_CAP} no matter what you set here.
       </p>
     </div>
