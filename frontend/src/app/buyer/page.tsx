@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
-import { ShoppingBag, FlaskConical, ShieldAlert } from "lucide-react";
+import { ShoppingBag, FlaskConical, ShieldAlert, Handshake } from "lucide-react";
 import { api, formatPaise, formatScore } from "@/lib/api";
 import type { CheckoutResult, DecisionResult, IntentResult, RankedCandidate, TrustWeights } from "@/lib/types";
 import { DEFAULT_WEIGHTS } from "@/lib/weights";
@@ -212,6 +212,13 @@ export default function BuyerPage() {
                 didn&apos;t match operational data.
               </p>
             )}
+            {decision.counter_offer && (
+              <p className="mb-3 flex items-center gap-1.5 text-xs text-primary">
+                <Handshake className="size-3.5" />
+                {decision.counter_offer.merchant_name} countered with {formatPaise(decision.counter_offer.countered_price_paise)}{" "}
+                (was {formatPaise(decision.counter_offer.original_price_paise)}) to win this mandate — see audit trail.
+              </p>
+            )}
             {decision.status === "no_candidates" ? (
               <p className="text-sm text-muted-foreground">No candidates survive the hard constraints for this mandate.</p>
             ) : (
@@ -280,6 +287,12 @@ function CandidateCard({
       <div className="flex items-baseline justify-between gap-3">
         <span className="flex items-center gap-2 text-sm font-medium">
           {rank === 1 && <Badge>Top pick</Badge>}
+          {candidate.countered && (
+            <Badge variant="outline" className="gap-1 border-primary/30 bg-primary/10 text-primary">
+              <Handshake className="size-3" />
+              Countered
+            </Badge>
+          )}
           <span className="text-muted-foreground">#{rank}</span>
           {candidate.merchant_name} — {candidate.product_name}
         </span>

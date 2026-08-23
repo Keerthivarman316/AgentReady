@@ -13,8 +13,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 const LAYER_LABELS: Record<string, string> = {
   intent: "Intent",
   hard_constraints: "Hard constraints",
+  trust_integrity: "Trust integrity",
   heuristics: "Heuristics ranking",
   real_time_optimize: "Real-time optimization",
+  counter_offer: "Counter-offer",
   checkout_attempt: "Checkout attempt",
   checkout_failure: "Checkout failure",
   checkout_fallback: "Checkout fallback",
@@ -27,6 +29,8 @@ const LAYER_STYLES: Record<string, string> = {
   checkout_failure: "border-red-500/30 bg-red-500/5",
   checkout_fallback: "border-amber-500/30 bg-amber-500/5",
   checkout_success: "border-emerald-500/30 bg-emerald-500/5",
+  trust_integrity: "border-amber-500/30 bg-amber-500/5",
+  counter_offer: "border-primary/30 bg-primary/5",
 };
 
 function AuditTrailContent() {

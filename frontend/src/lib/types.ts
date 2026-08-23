@@ -129,12 +129,26 @@ export interface RankedCandidate {
   trust_components?: TrustComponents;
   weights_used?: TrustWeights;
   live_price_paise?: number;
+  countered?: boolean;
+  countered_against?: boolean;
+}
+
+export interface CounterOffer {
+  merchant_id: string;
+  merchant_name: string;
+  product_id: string;
+  product_name: string;
+  original_price_paise: number;
+  countered_price_paise: number;
+  discount_pct: number;
+  new_composite_score: number;
 }
 
 export interface DecisionResult {
   status: "ranked" | "no_candidates";
   ranking: RankedCandidate[];
   quarantined_count?: number;
+  counter_offer?: CounterOffer | null;
 }
 
 export interface CheckoutResult {

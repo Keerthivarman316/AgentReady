@@ -1,4 +1,4 @@
-from app.buyer_agent import apply_hard_constraints, real_time_optimize
+from app.buyer_agent import apply_hard_constraints, compute_counter_offer, real_time_optimize
 
 
 def _candidate(product_id, price, sla_days, score=None, product_name=None):
@@ -84,3 +84,46 @@ def test_real_time_optimize_does_not_tie_break_beyond_epsilon():
 
 def test_real_time_optimize_empty_input():
     assert real_time_optimize([]) == []
+
+
+def _scored_candidate(product_id, price, composite_score, payment_trust=0.9, promise_keeping=0.9, reputation=0.8):
+    c = _candidate(product_id, price, sla_days=3)
+    c["composite_score"] = composite_score
+    c["trust_components"] = {
+        "payment_trust": payment_trust,
+        "promise_keeping": promise_keeping,
+        "price_fit": 0.5,
+        "reputation": reputation,
+    }
+    return c
+
+
+def test_compute_counter_offer_finds_minimal_sufficient_discount():
+    # band 100_000-200_000; runner priced near band_max so price_fit has
+    # plenty of room to improve as the price drops.
+    runner_up = _scored_candidate("runner", price=180_000, composite_score=0.745)
+    winner = _scored_candidate("winner", price=150_000, composite_score=0.76)
+
+    offer = compute_counter_offer(runner_up, winner, band_min=100_000, band_max=200_000)
+
+    assert offer is not None
+    assert offer["discount_pct"] == 0.06
+    assert offer["countered_price_paise"] == 169_200
+    assert offer["new_composite_score"] > winner["composite_score"]
+
+
+def test_compute_counter_offer_none_when_gap_exceeds_epsilon():
+    runner_up = _scored_candidate("runner", price=180_000, composite_score=0.745)
+    winner = _scored_candidate("winner", price=150_000, composite_score=0.95)
+
+    assert compute_counter_offer(runner_up, winner, band_min=100_000, band_max=200_000) is None
+
+
+def test_compute_counter_offer_none_when_even_max_discount_is_not_enough():
+    # Runner already sits near band_min, so a price cut has almost nowhere
+    # left to move price_fit — the achievable improvement is smaller than
+    # the gap it needs to close.
+    runner_up = _scored_candidate("runner", price=110_000, composite_score=0.885)
+    winner = _scored_candidate("winner", price=150_000, composite_score=0.91)
+
+    assert compute_counter_offer(runner_up, winner, band_min=100_000, band_max=200_000) is None
