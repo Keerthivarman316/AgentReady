@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { ShoppingBag, FlaskConical } from "lucide-react";
 import { api, formatPaise, formatScore } from "@/lib/api";
 import type { CheckoutResult, DecisionResult, IntentResult, RankedCandidate, TrustWeights } from "@/lib/types";
 import { DEFAULT_WEIGHTS } from "@/lib/weights";
@@ -102,7 +103,10 @@ export default function BuyerPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Buyer Agent</h1>
+      <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+        <ShoppingBag className="size-6 text-primary" />
+        Buyer Agent
+      </h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Intent Agent issues a signed mandate; the Buyer Agent ranks candidates through
         hard constraints, weighted heuristics, and a real-time price tie-break — then
@@ -173,7 +177,8 @@ export default function BuyerPage() {
               </CardTitle>
               {decision.status === "ranked" && (
                 <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <label className="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground">
+                    <FlaskConical className="size-3.5" />
                     <input
                       type="checkbox"
                       checked={simulateTopFailure}

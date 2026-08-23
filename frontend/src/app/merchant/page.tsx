@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Store } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Merchant } from "@/lib/types";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +29,10 @@ export default function MerchantListPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Merchants</h1>
+      <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+        <Store className="size-6 text-primary" />
+        Merchants
+      </h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Pick a merchant to see the Trust Mirror, category Benchmark, Growth Advisor, and SLA Advisor.
       </p>

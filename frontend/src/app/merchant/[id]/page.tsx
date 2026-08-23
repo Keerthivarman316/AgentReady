@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { ShieldCheck } from "lucide-react";
 import { api, formatPercent, formatScore } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { BenchmarkResult, GrowthAdvisorResult, SlaAdvisorResult, TrustComponents, TrustMirrorResult, TrustWeights, WhatIfResult } from "@/lib/types";
@@ -70,7 +71,10 @@ export default function MerchantDetailPage() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Trust Mirror</h1>
+      <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+        <ShieldCheck className="size-6 text-primary" />
+        Trust Mirror
+      </h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Exactly what the Buyer Agent sees for this merchant, plus its position against the category and a ranked fix list.
       </p>

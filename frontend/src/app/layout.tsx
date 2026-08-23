@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Nav from "@/components/Nav";
+import Footer from "@/components/Footer";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <Nav />
           <main className="flex-1">{children}</main>
+          <Footer />
           <Toaster position="top-right" />
         </ThemeProvider>
       </body>

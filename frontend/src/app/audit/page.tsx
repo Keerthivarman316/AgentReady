@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { ScrollText } from "lucide-react";
 import { api } from "@/lib/api";
 import type { AuditEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -58,7 +59,10 @@ function AuditTrailContent() {
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">Audit trail</h1>
+      <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+        <ScrollText className="size-6 text-primary" />
+        Audit trail
+      </h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Every Buyer Agent decision layer and checkout attempt for a mandate, in order.
       </p>
