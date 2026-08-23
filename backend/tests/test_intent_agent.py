@@ -28,6 +28,16 @@ def test_extract_intent_defaults_deadline_when_unspecified():
     assert intent.deadline_days == 7
 
 
+def test_extract_intent_beauty_category():
+    intent = extract_intent("looking for a vitamin c face serum under 500")
+    assert intent.category == "Beauty & Personal Care"
+
+
+def test_extract_intent_sports_category():
+    intent = extract_intent("need a yoga mat under 1000 within 5 days")
+    assert intent.category == "Sports & Outdoors"
+
+
 def test_resolve_intent_to_mandate_success():
     mandate = resolve_intent_to_mandate(
         consumer_id="user-1",

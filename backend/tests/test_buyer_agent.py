@@ -1,12 +1,12 @@
 from app.buyer_agent import apply_hard_constraints, real_time_optimize
 
 
-def _candidate(product_id, price, sla_days, score=None):
+def _candidate(product_id, price, sla_days, score=None, product_name=None):
     c = {
         "product_id": product_id,
         "merchant_id": f"m-{product_id}",
         "merchant_name": f"Merchant {product_id}",
-        "product_name": f"Product {product_id}",
+        "product_name": product_name or f"Product {product_id}",
         "price_paise": price,
         "declared_sla_days": sla_days,
     }
@@ -33,6 +33,27 @@ def test_hard_constraints_can_reject_for_both_reasons():
     candidates = [_candidate("a", 500, 10)]
     _, rejected = apply_hard_constraints(candidates, budget_cap_paise=200, deadline_days=5)
     assert set(rejected[0]["rejected_reasons"]) == {"over_budget", "misses_deadline"}
+
+
+def test_hard_constraints_rejects_wrong_product_type():
+    candidates = [
+        _candidate("a", 100, 3, product_name="Wireless Earbuds Pro"),
+        _candidate("b", 100, 3, product_name="USB-C Fast Charger 65W"),
+    ]
+    survivors, rejected = apply_hard_constraints(
+        candidates, budget_cap_paise=200, deadline_days=5, product_keywords=["earbud"]
+    )
+    assert [c["product_id"] for c in survivors] == ["a"]
+    assert rejected[0]["rejected_reasons"] == ["wrong_product_type"]
+
+
+def test_hard_constraints_no_product_keywords_keeps_everything_in_category():
+    candidates = [
+        _candidate("a", 100, 3, product_name="Wireless Earbuds Pro"),
+        _candidate("b", 100, 3, product_name="USB-C Fast Charger 65W"),
+    ]
+    survivors, _ = apply_hard_constraints(candidates, budget_cap_paise=200, deadline_days=5, product_keywords=[])
+    assert {c["product_id"] for c in survivors} == {"a", "b"}
 
 
 def test_real_time_optimize_no_tie_keeps_order():

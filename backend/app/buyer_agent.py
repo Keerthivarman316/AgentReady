@@ -11,6 +11,7 @@ Every layer's output is written to the audit trail as it runs.
 from __future__ import annotations
 
 from app.audit_trail import log_audit
+from app.text_extraction import extract_product_keywords
 from app.trust_engine import score_merchant
 
 REAL_TIME_TIE_EPSILON = 0.02
@@ -38,7 +39,13 @@ def fetch_candidates(cur, category_id: str) -> list[dict]:
     ]
 
 
-def apply_hard_constraints(candidates: list[dict], budget_cap_paise: int, deadline_days: int):
+def apply_hard_constraints(candidates: list[dict], budget_cap_paise: int, deadline_days: int,
+                            product_keywords: list[str] | None = None):
+    """`product_keywords`, when non-empty, rejects any candidate whose product
+    name doesn't contain at least one of them — e.g. a goal that says
+    "earbuds" must never surface a charger just because both are Electronics.
+    A true cutoff before scoring starts, same as budget/deadline: no amount of
+    trust score should let the wrong product type outrank the right one."""
     survivors, rejected = [], []
     for c in candidates:
         reasons = []
@@ -46,6 +53,8 @@ def apply_hard_constraints(candidates: list[dict], budget_cap_paise: int, deadli
             reasons.append("over_budget")
         if c["declared_sla_days"] > deadline_days:
             reasons.append("misses_deadline")
+        if product_keywords and not any(kw in c["product_name"].lower() for kw in product_keywords):
+            reasons.append("wrong_product_type")
         if reasons:
             rejected.append({**c, "rejected_reasons": reasons})
         else:
@@ -86,12 +95,16 @@ def real_time_optimize(ranked_candidates: list[dict], live_price_lookup=None,
 def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_price_lookup=None) -> dict:
     mandate_id = mandate["id"]
     candidates = fetch_candidates(cur, mandate["category_id"])
+    product_keywords = extract_product_keywords(mandate.get("goal_text") or "")
 
-    survivors, rejected = apply_hard_constraints(candidates, mandate["budget_cap_paise"], mandate["deadline_days"])
+    survivors, rejected = apply_hard_constraints(
+        candidates, mandate["budget_cap_paise"], mandate["deadline_days"], product_keywords
+    )
     log_audit(cur, mandate_id, "hard_constraints", {
         "candidates_in": len(candidates),
         "survivors": len(survivors),
         "rejected": rejected,
+        "product_keywords": product_keywords,
     })
 
     if not survivors:
