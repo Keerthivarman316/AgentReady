@@ -11,6 +11,7 @@ import type {
   SlaAdvisorResult,
   TrustMirrorResult,
   WeightOverrides,
+  WeightProfilesResult,
   WhatIfResult,
 } from "./types";
 
@@ -89,6 +90,9 @@ export const api = {
 
   getLostSaleSignal: (merchantId: string) =>
     apiFetch<LostSaleSignalResult>(`/merchants/${merchantId}/lost-sale-signal`),
+
+  getWeightProfiles: (merchantId: string) =>
+    apiFetch<WeightProfilesResult>(`/merchants/${merchantId}/weight-profiles`),
 
   postReadiness: (merchantId: string, items: string[]) =>
     apiFetch<ReadinessResult>(`/merchants/${merchantId}/readiness`, {

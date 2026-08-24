@@ -62,9 +62,28 @@ export interface GrowthFix {
   message: string;
 }
 
+export interface PersonaStanding {
+  rank: number | null;
+  composite_score: number | null;
+  total_in_category: number;
+}
+
 export interface GrowthAdvisorResult {
   benchmark: BenchmarkResult;
   fixes: GrowthFix[];
+  persona_breakdown: Record<string, PersonaStanding>;
+}
+
+export interface WeightProfileEntry {
+  share: number;
+  avg_rank: number;
+  avg_field_size: number;
+  description: string;
+}
+
+export interface WeightProfilesResult {
+  sample_size: number;
+  profile_breakdown: Record<string, WeightProfileEntry>;
 }
 
 export interface WhatIfResult {

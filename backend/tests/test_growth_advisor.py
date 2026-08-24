@@ -1,4 +1,4 @@
-from app.growth_advisor import generate_fix_list, rerank_with_override
+from app.growth_advisor import generate_fix_list, rank_by_persona, rerank_with_override
 from app.trust_engine import DEFAULT_WEIGHTS, compute_composite
 
 
@@ -68,3 +68,24 @@ def test_rerank_with_override_does_not_mutate_input():
     rerank_with_override(scores, "b", "payment_trust", 0.95, DEFAULT_WEIGHTS)
     assert scores[0]["components"]["payment_trust"] == 0.9
     assert scores[1]["components"]["payment_trust"] == 0.4
+
+
+def test_rank_by_persona_flips_rank_for_cheap_low_trust_merchant():
+    # "budget" has a low trust score but the best price fit; under a
+    # Budget Hunter's weights it should outrank "trusted", but under a
+    # Trust-First buyer it should not.
+    scores = [
+        _score("trusted", {"payment_trust": 0.9, "promise_keeping": 0.9, "price_fit": 0.3, "reputation": 0.8}),
+        _score("budget", {"payment_trust": 0.5, "promise_keeping": 0.5, "price_fit": 0.95, "reputation": 0.5}),
+    ]
+    breakdown = rank_by_persona(scores, "budget")
+    assert breakdown["Budget Hunter"]["rank"] == 1
+    assert breakdown["Trust-First"]["rank"] == 2
+    assert breakdown["Budget Hunter"]["total_in_category"] == 2
+
+
+def test_rank_by_persona_covers_every_named_persona():
+    scores = [_score("only", {"payment_trust": 0.5, "promise_keeping": 0.5, "price_fit": 0.5, "reputation": 0.5})]
+    breakdown = rank_by_persona(scores, "only")
+    assert set(breakdown) == {"Balanced (default)", "Trust-First", "Fast-Shipper", "Budget Hunter", "Reputation-Led"}
+    assert all(v["rank"] == 1 for v in breakdown.values())

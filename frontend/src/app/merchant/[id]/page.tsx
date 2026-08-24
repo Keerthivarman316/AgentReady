@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { ShieldCheck, TriangleAlert } from "lucide-react";
 import { api, formatPercent, formatScore } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { BenchmarkResult, GrowthAdvisorResult, LostSaleSignalResult, SlaAdvisorResult, TrustComponents, TrustMirrorResult, TrustWeights, WhatIfResult } from "@/lib/types";
+import type { BenchmarkResult, GrowthAdvisorResult, LostSaleSignalResult, SlaAdvisorResult, TrustComponents, TrustMirrorResult, TrustWeights, WeightProfilesResult, WhatIfResult } from "@/lib/types";
 import { DEFAULT_WEIGHTS } from "@/lib/weights";
 import WeightSliders from "@/components/WeightSliders";
 import ScoreBar from "@/components/ScoreBar";
@@ -49,6 +49,7 @@ export default function MerchantDetailPage() {
   const [growth, setGrowth] = useState<GrowthAdvisorResult | null>(null);
   const [sla, setSla] = useState<SlaAdvisorResult | null>(null);
   const [lostSaleSignal, setLostSaleSignal] = useState<LostSaleSignalResult | null>(null);
+  const [weightProfiles, setWeightProfiles] = useState<WeightProfilesResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -78,6 +79,10 @@ export default function MerchantDetailPage() {
 
   useEffect(() => {
     api.getLostSaleSignal(merchantId).then(setLostSaleSignal).catch(() => {});
+  }, [merchantId]);
+
+  useEffect(() => {
+    api.getWeightProfiles(merchantId).then(setWeightProfiles).catch(() => {});
   }, [merchantId]);
 
   return (
@@ -110,6 +115,7 @@ export default function MerchantDetailPage() {
           <TabsTrigger value="mirror">Trust Mirror</TabsTrigger>
           <TabsTrigger value="benchmark">Benchmark</TabsTrigger>
           <TabsTrigger value="growth">Growth Advisor</TabsTrigger>
+          <TabsTrigger value="profiles">Buyer Profiles</TabsTrigger>
           <TabsTrigger value="sla">SLA Advisor</TabsTrigger>
           <TabsTrigger value="lost-sale">Why buyers pass</TabsTrigger>
           <TabsTrigger value="readiness">Readiness</TabsTrigger>
@@ -203,6 +209,89 @@ export default function MerchantDetailPage() {
           ) : (
             <Skeleton className="h-32" />
           )}
+        </TabsContent>
+
+        <TabsContent value="profiles">
+          <div className="flex flex-col gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Where you stand with each kind of AI buyer</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  A buyer agent's weights aren't fixed — the same four trust signals can be prioritized
+                  differently per purchase. This re-ranks your category under a few common priority profiles
+                  at the current slider weights above.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {growth ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {Object.entries(growth.persona_breakdown).map(([persona, standing]) => (
+                      <div key={persona} className="rounded-md border p-3 text-sm">
+                        <p className="font-medium">{persona}</p>
+                        <p className="mt-1 text-muted-foreground">
+                          Rank <span className="font-medium text-foreground">{standing.rank ?? "n/a"}</span> of{" "}
+                          {standing.total_in_category}
+                          {standing.composite_score !== null && <> · score {formatScore(standing.composite_score)}</>}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <Skeleton className="h-24" />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Who's actually been evaluating you</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Real buyer-agent runs that scored this merchant, bucketed by the weight profile they used —
+                  not a synthetic benchmark, so it only reflects mandates run since this database was seeded.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {weightProfiles ? (
+                  weightProfiles.sample_size === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      No buyer-agent runs logged yet for this merchant. This fills in as buyers evaluate it —
+                      try running a few goals on the Buyer page first.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mb-3 text-sm text-muted-foreground">
+                        Based on {weightProfiles.sample_size} logged evaluation{weightProfiles.sample_size === 1 ? "" : "s"}.
+                      </p>
+                      <div className="flex flex-col gap-3">
+                        {Object.entries(weightProfiles.profile_breakdown)
+                          .sort((a, b) => b[1].share - a[1].share)
+                          .map(([persona, entry]) => (
+                            <div key={persona} className="flex flex-col gap-1">
+                              <div className="flex items-baseline justify-between text-sm">
+                                <span className="font-medium">{persona}</span>
+                                <span className="tabular-nums text-muted-foreground">
+                                  {formatPercent(entry.share)} · avg rank {entry.avg_rank.toFixed(1)} of{" "}
+                                  {entry.avg_field_size.toFixed(0)}
+                                </span>
+                              </div>
+                              <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                                <div
+                                  className="h-full rounded-full bg-primary transition-all"
+                                  style={{ width: `${Math.min(100, entry.share * 100)}%` }}
+                                />
+                              </div>
+                              <p className="text-xs text-muted-foreground">{entry.description}</p>
+                            </div>
+                          ))}
+                      </div>
+                    </>
+                  )
+                ) : (
+                  <Skeleton className="h-24" />
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="sla">

@@ -10,6 +10,7 @@ logger = logging.getLogger("agentready")
 from app.audit_trail import fetch_audit_trail, log_audit
 from app.benchmark_agent import benchmark_merchant
 from app.buyer_agent import run_buyer_pipeline
+from app.buyer_weight_profiles import get_weight_profile_signal
 from app.checkout import checkout_with_fallback
 from app.db import get_connection
 from app.graph import ping_graph
@@ -393,4 +394,11 @@ def get_sla_advisor(merchant_id: str):
 def get_lost_sale_signal_endpoint(merchant_id: str):
     with get_connection() as conn, conn.cursor() as cur:
         result = get_lost_sale_signal(cur, merchant_id)
+    return result
+
+
+@app.get("/merchants/{merchant_id}/weight-profiles")
+def get_weight_profiles_endpoint(merchant_id: str):
+    with get_connection() as conn, conn.cursor() as cur:
+        result = get_weight_profile_signal(cur, merchant_id)
     return result

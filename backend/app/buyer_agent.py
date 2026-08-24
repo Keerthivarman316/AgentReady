@@ -206,9 +206,13 @@ def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_pri
         return {"status": "no_candidates", "ranking": [], "quarantined_count": len(quarantined)}
 
     log_audit(cur, mandate_id, "heuristics", {
+        "weights_used": ranked[0]["weights_used"],
         "ranking": [
-            {"merchant_name": c["merchant_name"], "product_name": c["product_name"], "composite_score": c["composite_score"]}
-            for c in ranked
+            {
+                "merchant_id": c["merchant_id"], "merchant_name": c["merchant_name"],
+                "product_name": c["product_name"], "composite_score": c["composite_score"], "rank": i + 1,
+            }
+            for i, c in enumerate(ranked)
         ],
     })
 

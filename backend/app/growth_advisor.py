@@ -8,6 +8,7 @@ model.
 from __future__ import annotations
 
 from app.benchmark_agent import compute_category_scores, summarize_benchmark
+from app.buyer_weight_profiles import PERSONA_WEIGHTS
 from app.trust_engine import DEFAULT_WEIGHTS, compute_composite, normalize_weights
 
 FIX_MESSAGES = {
@@ -80,11 +81,35 @@ def rerank_with_override(scores: list[dict], merchant_id: str, component: str,
     }
 
 
+def rank_by_persona(scores: list[dict], merchant_id: str) -> dict:
+    """Pure: `scores` is a compute_category_scores() result (weight-independent
+    components already computed once). Re-derives composite scores under each
+    named buyer persona's weights without re-touching the database or writing
+    another trust_score_history row per persona — components don't change
+    with weights, only how they're combined."""
+    breakdown = {}
+    for persona, persona_weights in PERSONA_WEIGHTS.items():
+        rescored = [
+            {**s, "composite_score": compute_composite(s["components"], persona_weights)[0]}
+            for s in scores
+        ]
+        ranked = sorted(rescored, key=lambda s: s["composite_score"], reverse=True)
+        rank = next((i + 1 for i, s in enumerate(ranked) if s["merchant_id"] == merchant_id), None)
+        mine = next((s for s in ranked if s["merchant_id"] == merchant_id), None)
+        breakdown[persona] = {
+            "rank": rank,
+            "composite_score": mine["composite_score"] if mine else None,
+            "total_in_category": len(scores),
+        }
+    return breakdown
+
+
 def advise_growth(cur, merchant_id: str, category_id: str, weights: dict | None = None) -> dict:
     scores = compute_category_scores(cur, category_id, weights=weights)
     benchmark = summarize_benchmark(scores, merchant_id)
     fixes = generate_fix_list(benchmark, weights)
-    return {"benchmark": benchmark, "fixes": fixes}
+    persona_breakdown = rank_by_persona(scores, merchant_id)
+    return {"benchmark": benchmark, "fixes": fixes, "persona_breakdown": persona_breakdown}
 
 
 def simulate_what_if(cur, merchant_id: str, category_id: str, component: str,
