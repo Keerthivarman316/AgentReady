@@ -140,7 +140,11 @@ The one-sentence pitch: **most entries build an agent that shops; we build the t
 - **Frontend:** Next.js + Tailwind — three surfaces: buyer chat with live decision trace, merchant Trust Mirror + Growth dashboard, audit trail viewer
 - **Synthetic data:** 3–5 fake merchants per category with deliberately varied payment-trust, promise-keeping, and reputation profiles, plus declared SLAs some honor and some violate — grounded in realistic distributions, not arbitrary numbers
 
-## 8. What we'll show at demo time
+## 8. MCP server — trust intelligence any AI agent can call
+
+The Composite Trust Engine, Growth Advisor, and Buyer Agent ranking are also exposed as an [MCP server](mcp_server/) — not just callable by this project's own Buyer Agent. Any MCP-compatible client (Claude Desktop, Claude Code, or any other agent that speaks MCP) can connect and call `get_merchant_trust_score`, `get_growth_advice`, `rank_merchants_for_purchase`, and five other tools directly, live, against the real Postgres-backed scoring engine. It's read-only by design — actually transacting still goes through the mandate-bound, audit-logged `/buyer/purchase` API — but it means AgentReady's trust intelligence isn't locked inside one demo app; it's a tool any agent in the 2026 agentic-commerce ecosystem could plug into, the same way MCP has become the protocol most AI shopping agents already depend on for tool access.
+
+## 9. What we'll show at demo time
 
 1. Onboard a merchant with a messy, marketing-only catalog → Readiness Agent scores it and generates the structured feed.
 2. Give the Buyer Agent a natural-language goal → it issues a mandate, walks through its 3-layer reasoning live, and picks a merchant based on the weighted composite score — slide the weights (price up/trust down, then reverse) and show the ranking flip live, proving the trade-off is real and inspectable, not hardcoded.
