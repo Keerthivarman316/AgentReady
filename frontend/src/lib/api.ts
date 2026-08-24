@@ -1,6 +1,7 @@
 import type {
   AuditEntry,
   BenchmarkResult,
+  CatalogResult,
   ChatFollowupResult,
   DecisionResult,
   GrowthAdvisorResult,
@@ -49,6 +50,8 @@ function weightsQuery(weights?: WeightOverrides): string {
 
 export const api = {
   listMerchants: () => apiFetch<Merchant[]>("/merchants"),
+
+  getCatalog: () => apiFetch<CatalogResult>("/catalog"),
 
   createIntent: (consumer_id: string, goal_text: string) =>
     apiFetch<IntentResult>("/intent", { method: "POST", body: JSON.stringify({ consumer_id, goal_text }) }),

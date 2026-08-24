@@ -7,6 +7,7 @@ import { ShoppingBag, FlaskConical, ShieldAlert, Handshake } from "lucide-react"
 import { api, formatPaise, formatScore } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type {
+  CatalogResult,
   ChatFollowupResult,
   CheckoutResult,
   DecisionResult,
@@ -45,6 +46,25 @@ function describeUpdate(diff: ChatFollowupResult, decision: DecisionResult, prod
   return parts.length ? parts.join(" ") : "Got it — didn't catch anything to change there.";
 }
 
+function catalogSummary(catalog: CatalogResult | null): string {
+  if (!catalog || catalog.categories.length === 0) return "";
+  return catalog.categories.map((c) => `${c.name} (e.g. ${c.products.slice(0, 3).join(", ")})`).join("; ");
+}
+
+function friendlyError(rawMessage: string, catalog: CatalogResult | null): string {
+  if (rawMessage.includes("could not infer a product category")) {
+    const hint = catalogSummary(catalog);
+    return `I don't have that in the catalog yet.${hint ? ` Here's what I can search: ${hint}.` : ""}`;
+  }
+  if (rawMessage.includes("could not infer a budget")) {
+    return 'I still need a budget to work with — try something like "under 2000 rupees".';
+  }
+  if (rawMessage.includes("unknown category")) {
+    return "I don't recognize that category yet — try naming the product instead, e.g. \"wireless earbuds\".";
+  }
+  return `Couldn't process that: ${rawMessage}`;
+}
+
 export default function BuyerPage() {
   const [consumerId] = useState("demo-consumer");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -62,11 +82,16 @@ export default function BuyerPage() {
   const [simulateTopFailure, setSimulateTopFailure] = useState(false);
   const [buyingProductId, setBuyingProductId] = useState<string | null>(null);
   const [productCheckouts, setProductCheckouts] = useState<Record<string, CheckoutResult | null>>({});
+  const [catalog, setCatalog] = useState<CatalogResult | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    api.getCatalog().then(setCatalog).catch(() => {});
+  }, []);
 
   async function sendChatMessage() {
     const text = chatInput.trim();
@@ -111,8 +136,7 @@ export default function BuyerPage() {
       setMessages((prev) => [...prev, { role: "assistant", text: describeUpdate(diff, preview.decision, nextProductPhrase) }]);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setMessages((prev) => [...prev, { role: "assistant", text: `Couldn't process that: ${msg}` }]);
+      setMessages((prev) => [...prev, { role: "assistant", text: friendlyError(msg, catalog) }]);
     } finally {
       setLoading(null);
     }
@@ -208,6 +232,9 @@ export default function BuyerPage() {
                 Try &ldquo;wireless earbuds under 2000 within 3 days&rdquo;. You can redirect anytime —
                 &ldquo;actually get me the cheapest one&rdquo;, &ldquo;I need it faster&rdquo;, &ldquo;how about
                 headphones instead&rdquo;.
+                {catalog && catalog.categories.length > 0 && (
+                  <> Catalog spans {catalog.categories.map((c) => c.name).join(", ")}.</>
+                )}
               </p>
             )}
             {messages.map((m, i) => (

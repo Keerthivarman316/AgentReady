@@ -15,23 +15,29 @@ import re
 CATEGORY_KEYWORDS = {
     "Electronics": [
         "earbud", "headphone", "speaker", "camera", "charger", "tracker",
-        "electronics", "gadget", "bluetooth",
+        "electronics", "gadget", "bluetooth", "monitor", "keyboard", "mouse",
+        "webcam", "power bank", "smartwatch",
     ],
     "Fashion": [
         "shirt", "jeans", "sneaker", "shoe", "wallet", "sweater", "tote",
-        "fashion", "clothing", "bag",
+        "fashion", "clothing", "bag", "t-shirt", "tshirt", "trouser",
+        "sunglasses", "belt", "boots", "cap",
     ],
     "Home & Kitchen": [
         "kettle", "cookware", "pillow", "pan", "dinner", "lamp", "kitchen",
-        "home", "plate", "cutlery",
+        "home", "plate", "cutlery", "air fryer", "mixer grinder", "bedsheet",
+        "fan", "wall clock", "organizer",
     ],
     "Beauty & Personal Care": [
         "serum", "trimmer", "hair mask", "cleansing brush", "sunscreen",
         "toothbrush", "beauty", "skincare", "personal care", "skin",
+        "moisturizer", "lip balm", "hair dryer", "perfume", "manicure",
+        "face wash",
     ],
     "Sports & Outdoors": [
         "yoga mat", "dumbbell", "backpack", "water bottle", "resistance band",
-        "tent", "camping", "trekking", "gym", "sports", "outdoor",
+        "tent", "camping", "trekking", "gym", "sports", "outdoor", "helmet",
+        "badminton", "skipping rope", "swim goggles", "hiking pole", "football",
     ],
 }
 
@@ -49,6 +55,13 @@ PRODUCT_TYPE_KEYWORDS = {
     "charger": "charger",
     "fitness tracker": "fitness tracker",
     "tracker": "tracker",
+    "monitor": "monitor",
+    "keyboard": "keyboard",
+    "mouse": "mouse",
+    "webcam": "webcam",
+    "power bank": "power bank",
+    "smartwatch": "smartwatch",
+    "smart watch": "smartwatch",
     # Fashion
     "shirt": "shirt",
     "jeans": "jeans",
@@ -56,6 +69,13 @@ PRODUCT_TYPE_KEYWORDS = {
     "wallet": "wallet",
     "sweater": "sweater",
     "tote": "tote",
+    "t-shirt": "t-shirt",
+    "tshirt": "t-shirt",
+    "trouser": "trouser",
+    "sunglasses": "sunglasses",
+    "belt": "belt",
+    "boots": "boots",
+    "cap": "cap",
     # Home & Kitchen
     "kettle": "kettle",
     "cookware": "cookware",
@@ -63,6 +83,13 @@ PRODUCT_TYPE_KEYWORDS = {
     "frying pan": "frying pan",
     "dinner set": "dinner set",
     "lamp": "lamp",
+    "air fryer": "air fryer",
+    "mixer grinder": "mixer grinder",
+    "bedsheet": "bedsheet",
+    "table fan": "table fan",
+    "fan": "fan",
+    "wall clock": "wall clock",
+    "organizer": "organizer",
     # Beauty & Personal Care
     "serum": "serum",
     "trimmer": "trimmer",
@@ -70,6 +97,12 @@ PRODUCT_TYPE_KEYWORDS = {
     "cleansing brush": "cleansing brush",
     "sunscreen": "sunscreen",
     "toothbrush": "toothbrush",
+    "moisturizer": "moisturizer",
+    "lip balm": "lip balm",
+    "hair dryer": "hair dryer",
+    "perfume": "perfume",
+    "manicure": "manicure",
+    "face wash": "face wash",
     # Sports & Outdoors
     "yoga mat": "yoga mat",
     "dumbbell": "dumbbell",
@@ -77,6 +110,13 @@ PRODUCT_TYPE_KEYWORDS = {
     "water bottle": "water bottle",
     "resistance band": "resistance band",
     "tent": "tent",
+    "cycling helmet": "helmet",
+    "helmet": "helmet",
+    "badminton": "badminton",
+    "skipping rope": "skipping rope",
+    "swim goggles": "swim goggles",
+    "hiking pole": "hiking pole",
+    "football": "football",
 }
 
 _PRICE_PATTERNS = [

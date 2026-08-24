@@ -85,6 +85,23 @@ def ping(req: PingRequest):
     return {"reply": result["reply"]}
 
 
+@app.get("/catalog")
+def get_catalog():
+    """Categories and their real product names, straight from the DB — used
+    by the buyer chat to explain what it can actually search for instead of
+    leaking a raw 'could not infer a product category' error when a query
+    falls outside the seeded catalog."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.name, array_agg(DISTINCT p.name ORDER BY p.name)
+            FROM categories c JOIN products p ON p.category_id = c.id
+            GROUP BY c.name ORDER BY c.name
+            """
+        )
+        return {"categories": [{"name": name, "products": products} for name, products in cur.fetchall()]}
+
+
 @app.get("/merchants")
 def list_merchants():
     with get_connection() as conn, conn.cursor() as cur:

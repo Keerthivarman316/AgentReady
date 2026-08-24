@@ -40,6 +40,9 @@ export interface TrustMirrorResult extends TrustScoreResult {
   contributions: TrustComponents;
   weakest_signal: keyof TrustComponents;
   strongest_signal: keyof TrustComponents;
+  score_out_of_100: number;
+  score_label: "Excellent" | "Good" | "Fair" | "Needs Improvement";
+  summary: string;
 }
 
 export interface BenchmarkResult {
@@ -177,6 +180,10 @@ export interface CheckoutResult {
   product_id?: string;
   order?: { id: string; simulated?: boolean; settlement_note?: string };
   attempted?: number;
+}
+
+export interface CatalogResult {
+  categories: { name: string; products: string[] }[];
 }
 
 export interface ChatFollowupResult {
