@@ -65,7 +65,9 @@ def create_test_order(candidate: dict, receipt: str) -> dict:
 def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], create_order_fn=None,
                             force_fail_ranks: set[int] | None = None) -> dict:
     if create_order_fn is None:
-        create_order_fn = lambda candidate: create_test_order(candidate, receipt=f"{mandate_id}-{candidate['product_id']}")
+        # Razorpay caps `receipt` at 56 chars; two full UUIDs joined ("mandate-product") is 73,
+        # so truncate the mandate id down to keep the receipt under the limit.
+        create_order_fn = lambda candidate: create_test_order(candidate, receipt=f"{mandate_id[:8]}-{candidate['product_id']}")
     force_fail_ranks = force_fail_ranks or set()
 
     for rank, candidate in enumerate(ranked_candidates):
