@@ -179,6 +179,15 @@ export interface CheckoutResult {
   attempted?: number;
 }
 
+export interface ChatFollowupResult {
+  persona: string | null;
+  weights: TrustWeights | null;
+  category: string | null;
+  budget_cap_paise: number | null;
+  deadline_days: number | null;
+  product_keywords: string[] | null;
+}
+
 export interface PurchaseResult {
   mandate_id: string;
   decision: DecisionResult;

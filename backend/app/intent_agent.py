@@ -9,20 +9,12 @@ touching mandate issuance or the API layer.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from app.ap2_mandate import MandateDraft, build_mandate
-from app.text_extraction import extract_category, extract_price_paise
+from app.text_extraction import extract_category, extract_deadline_days, extract_price_paise
 
 DEFAULT_DEADLINE_DAYS = 7
-
-_DEADLINE_PATTERNS = [
-    (re.compile(r"\btomorrow\b", re.I), 1),
-    (re.compile(r"\btoday\b", re.I), 1),
-    (re.compile(r"\bnext\s+week\b", re.I), 7),
-    (re.compile(r"(?:within|in|by)\s+(\d+)\s*day", re.I), None),
-]
 
 
 @dataclass
@@ -32,21 +24,11 @@ class ExtractedIntent:
     deadline_days: int
 
 
-def _extract_deadline_days(text: str) -> int:
-    for pattern, fixed_days in _DEADLINE_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            if fixed_days is not None:
-                return fixed_days
-            return int(match.group(1))
-    return DEFAULT_DEADLINE_DAYS
-
-
 def extract_intent(goal_text: str) -> ExtractedIntent:
     return ExtractedIntent(
         category=extract_category(goal_text),
         budget_cap_paise=extract_price_paise(goal_text),
-        deadline_days=_extract_deadline_days(goal_text),
+        deadline_days=extract_deadline_days(goal_text) or DEFAULT_DEADLINE_DAYS,
     )
 
 

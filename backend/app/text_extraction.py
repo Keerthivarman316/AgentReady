@@ -85,6 +85,26 @@ _PRICE_PATTERNS = [
     re.compile(r"(?:₹|rs\.?|inr)\s*([\d,]+)(k)?", re.I),
 ]
 
+# Kept separate from a default fallback (unlike extract_category/extract_price_paise,
+# which the Intent Agent treats as required) so a caller can tell "text didn't
+# mention a deadline" (None) apart from "text explicitly meant right away" —
+# a follow-up chat turn needs that distinction to know whether to touch the
+# conversation's existing deadline at all.
+_DEADLINE_PATTERNS = [
+    (re.compile(r"\btomorrow\b", re.I), 1),
+    (re.compile(r"\btoday\b", re.I), 1),
+    (re.compile(r"\bnext\s+week\b", re.I), 7),
+    (re.compile(r"(?:within|in|by)\s+(\d+)\s*day", re.I), None),
+]
+
+
+def extract_deadline_days(text: str) -> int | None:
+    for pattern, fixed_days in _DEADLINE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return fixed_days if fixed_days is not None else int(match.group(1))
+    return None
+
 
 def extract_category(text: str) -> str | None:
     lowered = text.lower()

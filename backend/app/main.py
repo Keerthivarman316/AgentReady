@@ -11,6 +11,7 @@ from app.audit_trail import fetch_audit_trail, log_audit
 from app.benchmark_agent import benchmark_merchant
 from app.buyer_agent import run_buyer_pipeline
 from app.buyer_weight_profiles import get_weight_profile_signal
+from app.chat_intent import parse_followup
 from app.checkout import checkout_with_fallback
 from app.db import get_connection
 from app.graph import ping_graph
@@ -202,6 +203,21 @@ def create_intent(req: IntentRequest):
         "issued_at": mandate.issued_at.isoformat(),
         "expires_at": mandate.expires_at.isoformat(),
     }
+
+
+class ChatFollowupRequest(BaseModel):
+    message: str
+
+
+@app.post("/chat/parse-followup")
+def parse_chat_followup(req: ChatFollowupRequest):
+    """Pure rule-based parse, no DB access — lets the buyer chat UI interpret
+    a follow-up turn ('actually get me the cheapest one') without going
+    through the LLM this project doesn't have configured. Reuses the same
+    extractors the Intent Agent uses for an opening goal, so the frontend
+    can reconstruct a canonical goal_text and re-issue /intent on every
+    turn instead of needing a second, chat-specific mandate path."""
+    return parse_followup(req.message)
 
 
 class PurchaseRequest(BaseModel):

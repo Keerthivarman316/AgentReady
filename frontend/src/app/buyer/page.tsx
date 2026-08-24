@@ -1,11 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { ShoppingBag, FlaskConical, ShieldAlert, Handshake } from "lucide-react";
 import { api, formatPaise, formatScore } from "@/lib/api";
-import type { CheckoutResult, DecisionResult, IntentResult, RankedCandidate, TrustWeights } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import type {
+  ChatFollowupResult,
+  CheckoutResult,
+  DecisionResult,
+  IntentResult,
+  RankedCandidate,
+  TrustWeights,
+} from "@/lib/types";
 import { DEFAULT_WEIGHTS } from "@/lib/weights";
 import WeightSliders from "@/components/WeightSliders";
 import ScoreBar from "@/components/ScoreBar";
@@ -14,32 +22,97 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
+interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+}
+
+function describeUpdate(diff: ChatFollowupResult, decision: DecisionResult, productPhrase: string): string {
+  const parts: string[] = [];
+  if (diff.persona) parts.push(`Prioritizing like a ${diff.persona} buyer now.`);
+  if (diff.budget_cap_paise) parts.push(`Budget set to ${formatPaise(diff.budget_cap_paise)}.`);
+  if (diff.deadline_days) parts.push(`Deadline set to ${diff.deadline_days} day${diff.deadline_days === 1 ? "" : "s"}.`);
+  if (diff.product_keywords?.length) parts.push(`Looking at ${productPhrase} now.`);
+
+  if (decision.status === "ranked" && decision.ranking.length > 0) {
+    const top = decision.ranking[0];
+    parts.push(
+      `Top pick: ${top.merchant_name} — ${top.product_name} at ${formatPaise(top.live_price_paise ?? top.price_paise)} (${decision.ranking.length} candidate${decision.ranking.length === 1 ? "" : "s"} ranked).`
+    );
+  } else if (decision.status === "no_candidates") {
+    parts.push("No candidates survive those constraints — try loosening the budget or deadline.");
+  }
+  return parts.length ? parts.join(" ") : "Got it — didn't catch anything to change there.";
+}
+
 export default function BuyerPage() {
   const [consumerId] = useState("demo-consumer");
-  const [goalText, setGoalText] = useState("wireless earbuds under 2000 within 3 days");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [productPhrase, setProductPhrase] = useState("");
+  const [categoryHint, setCategoryHint] = useState("");
+  const [budgetPaise, setBudgetPaise] = useState<number | null>(null);
+  const [deadlineDays, setDeadlineDays] = useState(7);
   const [mandate, setMandate] = useState<IntentResult | null>(null);
   const [weights, setWeights] = useState<TrustWeights>(DEFAULT_WEIGHTS);
   const [decision, setDecision] = useState<DecisionResult | null>(null);
   const [checkout, setCheckout] = useState<CheckoutResult | null>(null);
-  const [loading, setLoading] = useState<"intent" | "preview" | "purchase" | null>(null);
+  const [loading, setLoading] = useState<"chat" | "preview" | "purchase" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [simulateTopFailure, setSimulateTopFailure] = useState(false);
   const [buyingProductId, setBuyingProductId] = useState<string | null>(null);
   const [productCheckouts, setProductCheckouts] = useState<Record<string, CheckoutResult | null>>({});
+  const transcriptRef = useRef<HTMLDivElement>(null);
 
-  async function submitIntent() {
-    setLoading("intent");
+  useEffect(() => {
+    transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
+
+  async function sendChatMessage() {
+    const text = chatInput.trim();
+    if (!text || loading === "chat") return;
+    setChatInput("");
+    setMessages((prev) => [...prev, { role: "user", text }]);
+    setLoading("chat");
     setError(null);
+
     try {
+      const diff = await api.parseChatFollowup(text);
+      const nextProductPhrase = diff.product_keywords?.length ? diff.product_keywords.join(" ") : productPhrase;
+      const nextCategory = diff.category ?? categoryHint;
+      const nextBudgetPaise = diff.budget_cap_paise ?? budgetPaise;
+      const nextDeadlineDays = diff.deadline_days ?? deadlineDays;
+      const nextWeights = diff.weights ?? weights;
+
+      if (nextBudgetPaise === null) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", text: 'I still need a budget to work with — try something like "under 2000 rupees".' },
+        ]);
+        return;
+      }
+
+      const productOrCategory = nextProductPhrase || nextCategory.toLowerCase();
+      const goalText = `${productOrCategory} under ${nextBudgetPaise / 100} rupees within ${nextDeadlineDays} days`.trim();
+
       const result = await api.createIntent(consumerId, goalText);
+      const preview = await api.rankPreview(result.mandate_id, toOverrides(nextWeights));
+
+      setProductPhrase(nextProductPhrase);
+      setCategoryHint(nextCategory);
+      setBudgetPaise(nextBudgetPaise);
+      setDeadlineDays(nextDeadlineDays);
+      setWeights(nextWeights);
       setMandate(result);
-      setDecision(null);
+      setDecision(preview.decision);
       setCheckout(null);
       setProductCheckouts({});
-      const preview = await api.rankPreview(result.mandate_id, toOverrides(weights));
-      setDecision(preview.decision);
+
+      setMessages((prev) => [...prev, { role: "assistant", text: describeUpdate(diff, preview.decision, nextProductPhrase) }]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      setMessages((prev) => [...prev, { role: "assistant", text: `Couldn't process that: ${msg}` }]);
     } finally {
       setLoading(null);
     }
@@ -119,20 +192,54 @@ export default function BuyerPage() {
         Buyer Agent
       </h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        Intent Agent issues a signed mandate; the Buyer Agent ranks candidates through
-        hard constraints, weighted heuristics, and a real-time price tie-break — then
-        checks out, falling back automatically if the top choice fails.
+        Tell the agent what you want, then redirect it anytime — the Intent Agent re-issues a mandate on
+        every turn and the Buyer Agent re-ranks live through hard constraints, weighted heuristics, and a
+        real-time price tie-break.
       </p>
 
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Goal</CardTitle>
+          <CardTitle>Chat</CardTitle>
         </CardHeader>
         <CardContent>
-          <Textarea rows={2} value={goalText} onChange={(e) => setGoalText(e.target.value)} />
-          <Button onClick={submitIntent} disabled={loading === "intent"} className="mt-3">
-            {loading === "intent" ? "Issuing mandate…" : "Issue mandate"}
-          </Button>
+          <div ref={transcriptRef} className="flex max-h-80 flex-col gap-3 overflow-y-auto rounded-md border bg-muted/30 p-3">
+            {messages.length === 0 && (
+              <p className="text-sm text-muted-foreground">
+                Try &ldquo;wireless earbuds under 2000 within 3 days&rdquo;. You can redirect anytime —
+                &ldquo;actually get me the cheapest one&rdquo;, &ldquo;I need it faster&rdquo;, &ldquo;how about
+                headphones instead&rdquo;.
+              </p>
+            )}
+            {messages.map((m, i) => (
+              <div
+                key={i}
+                className={cn(
+                  "max-w-[85%] rounded-lg px-3 py-2 text-sm",
+                  m.role === "user" ? "self-end bg-primary text-primary-foreground" : "self-start border bg-background"
+                )}
+              >
+                {m.text}
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 flex gap-2">
+            <Textarea
+              rows={1}
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  sendChatMessage();
+                }
+              }}
+              placeholder="wireless earbuds under 2000 within 3 days"
+              className="min-h-9 resize-none"
+            />
+            <Button onClick={sendChatMessage} disabled={loading === "chat" || !chatInput.trim()}>
+              {loading === "chat" ? "…" : "Send"}
+            </Button>
+          </div>
         </CardContent>
       </Card>
 
@@ -172,6 +279,10 @@ export default function BuyerPage() {
         <Card className="mt-6">
           <CardHeader>
             <CardTitle>Weights (layer 2: learned heuristics)</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              The chat can drive these too — say &ldquo;cheapest&rdquo;, &ldquo;most trusted&rdquo;, or
+              &ldquo;fastest&rdquo; — or drag them directly.
+            </p>
           </CardHeader>
           <CardContent>
             <WeightSliders weights={weights} onChange={previewRanking} />

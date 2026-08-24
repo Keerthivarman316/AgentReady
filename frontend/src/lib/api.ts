@@ -1,6 +1,7 @@
 import type {
   AuditEntry,
   BenchmarkResult,
+  ChatFollowupResult,
   DecisionResult,
   GrowthAdvisorResult,
   IntentResult,
@@ -51,6 +52,9 @@ export const api = {
 
   createIntent: (consumer_id: string, goal_text: string) =>
     apiFetch<IntentResult>("/intent", { method: "POST", body: JSON.stringify({ consumer_id, goal_text }) }),
+
+  parseChatFollowup: (message: string) =>
+    apiFetch<ChatFollowupResult>("/chat/parse-followup", { method: "POST", body: JSON.stringify({ message }) }),
 
   rankPreview: (mandate_id: string, weights?: WeightOverrides) =>
     apiFetch<{ mandate_id: string; decision: DecisionResult }>("/buyer/rank-preview", {
