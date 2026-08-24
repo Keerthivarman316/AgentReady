@@ -127,12 +127,17 @@ export default function MerchantDetailPage() {
               <CardHeader>
                 <div className="flex items-baseline justify-between">
                   <CardTitle>
-                    Composite score {loading && <span className="font-normal text-muted-foreground">(recomputing…)</span>}
+                    Trust score {loading && <span className="font-normal text-muted-foreground">(recomputing…)</span>}
                   </CardTitle>
-                  <span className="text-lg font-semibold tabular-nums">{formatScore(mirror.composite_score)}</span>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-2xl font-semibold tabular-nums">{mirror.score_out_of_100}</span>
+                    <span className="text-sm text-muted-foreground">/100</span>
+                    <ScoreLabelBadge label={mirror.score_label} />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
+                <p className="mb-4 text-sm text-muted-foreground">{mirror.summary}</p>
                 {mirror.integrity.flagged && (
                   <div className="mb-4 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
                     <TriangleAlert className="mt-0.5 size-4 shrink-0" />
@@ -148,8 +153,7 @@ export default function MerchantDetailPage() {
                   ))}
                 </div>
                 <p className="mt-3 text-xs text-muted-foreground">
-                  Weakest signal: <span className="font-medium text-foreground">{COMPONENT_LABELS[mirror.weakest_signal]}</span> · Strongest:{" "}
-                  <span className="font-medium text-foreground">{COMPONENT_LABELS[mirror.strongest_signal]}</span>
+                  Raw composite: {formatScore(mirror.composite_score)}
                 </p>
               </CardContent>
             </Card>
@@ -382,6 +386,16 @@ export default function MerchantDetailPage() {
       </Tabs>
     </div>
   );
+}
+
+function ScoreLabelBadge({ label }: { label: TrustMirrorResult["score_label"] }) {
+  const styles: Record<TrustMirrorResult["score_label"], string> = {
+    Excellent: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    Good: "bg-primary/10 text-primary",
+    Fair: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    "Needs Improvement": "bg-red-500/10 text-red-600 dark:text-red-400",
+  };
+  return <Badge variant="outline" className={cn("border-transparent", styles[label])}>{label}</Badge>;
 }
 
 function AssessmentBadge({ assessment }: { assessment: SlaAdvisorResult["assessment"] }) {
