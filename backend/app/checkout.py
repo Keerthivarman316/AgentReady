@@ -14,6 +14,18 @@ attempt, so the purchase flow is demoable without a Razorpay account. Every
 simulated order is marked `"simulated": true` on the order and in the audit
 log — nothing pretends to be a real payment. The moment real keys are set,
 this path is never taken; every order goes through the real (test-mode) API.
+
+With real keys, checkout stops at a real Razorpay order in `status: created`
+— it deliberately does not attempt to capture a payment. That's not a missing
+feature: under AP2 (Google's Agent Payments Protocol), an agent's job ends at
+producing a signed Payment Mandate; the actual charge is the payment
+network/wallet's job, executed against a credential the agent never sees raw.
+Razorpay also has no headless capture path on a standard account — their
+server-to-server card API 404s for unapproved merchants, and their hosted
+Checkout widget sits behind its own bot-detection stack (hCaptcha + device
+fingerprinting), which is exactly the kind of thing an agent shouldn't be
+built to defeat. So `order.create()` is the correct boundary for this
+project's agent, not a shortcut around one.
 """
 
 from __future__ import annotations
@@ -59,7 +71,14 @@ def create_test_order(candidate: dict, receipt: str) -> dict:
         "receipt": receipt,
         "payment_capture": 1,
     })
-    return {**order, "simulated": False}
+    return {
+        **order,
+        "simulated": False,
+        "settlement_note": (
+            "Real Razorpay test-mode order. Payment Mandate authorized; capture is the "
+            "payment network/wallet's responsibility per AP2, not the agent's."
+        ),
+    }
 
 
 def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], create_order_fn=None,
@@ -93,6 +112,7 @@ def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], 
         log_audit(cur, mandate_id, "checkout_success", {
             "rank": rank, "merchant_name": candidate["merchant_name"], "order_id": order.get("id"),
             "simulated": bool(order.get("simulated")),
+            "settlement_note": order.get("settlement_note"),
         })
         return {
             "status": "success", "rank": rank,

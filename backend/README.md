@@ -67,6 +67,16 @@ to `/buyer/purchase` to force a specific rank to fail deterministically (audit-l
 `"simulated": true`) — this is what makes the fallback path demoable on cue instead of
 depending on an incidental Razorpay rejection.
 
+With real `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET` set, checkout creates a real Razorpay
+test-mode order and stops there — it deliberately does not attempt to capture a payment.
+That's the correct AP2 boundary: an agent's job ends at a signed Payment Mandate; actual
+capture is the payment network/wallet's job, against a credential the agent never sees raw.
+(Razorpay also has no headless capture path for standard accounts — their S2S card API is
+merchant-gated, and their hosted Checkout widget sits behind its own bot-detection stack,
+which isn't something an agent should be built to defeat.) Without keys configured, checkout
+runs in demo mode instead: it simulates a successful order (`"simulated": true`) so the
+purchase flow is demoable without a Razorpay account.
+
 ```
 POST /intent             {"consumer_id": "...", "goal_text": "earbuds under 2000 within 3 days"}
 POST /buyer/rank-preview  {"mandate_id": "...", "w_price_fit": 0.5, ...}   # weights optional, no checkout side effect

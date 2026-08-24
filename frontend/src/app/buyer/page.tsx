@@ -251,9 +251,17 @@ export default function BuyerPage() {
                   Success at rank {(checkout.rank ?? 0) + 1} — order {checkout.order?.id}.
                   {(checkout.rank ?? 0) > 0 && " The top choice failed and the agent fell back automatically — see the audit trail."}
                 </p>
-                {checkout.order?.simulated && (
+                {checkout.order?.simulated ? (
                   <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400">
                     Demo order — Razorpay not configured
+                  </Badge>
+                ) : (
+                  <Badge
+                    variant="outline"
+                    className="border-primary/30 bg-primary/10 text-primary"
+                    title={checkout.order?.settlement_note}
+                  >
+                    Payment Mandate authorized (Razorpay test mode)
                   </Badge>
                 )}
               </div>
@@ -318,7 +326,7 @@ function CandidateCard({
         {result && (
           <span className={result.status === "success" ? "text-xs text-emerald-600 dark:text-emerald-400" : "text-xs text-destructive"}>
             {result.status === "success"
-              ? `Purchased — ${result.order?.simulated ? "demo order" : "order"} ${result.order?.id}`
+              ? `Purchased — ${result.order?.simulated ? "demo order" : "mandate authorized"} ${result.order?.id}`
               : "Checkout failed"}
           </span>
         )}
