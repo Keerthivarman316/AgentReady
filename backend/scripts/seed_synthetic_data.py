@@ -16,6 +16,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import random
 import uuid
@@ -23,6 +24,8 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
+
+from app.llm_client import embed_texts, is_llm_configured
 
 SEED = 42
 MERCHANTS_PER_CATEGORY = 50
@@ -317,11 +320,41 @@ def generate_dataset(merchants_per_category: int = MERCHANTS_PER_CATEGORY):
     return merchants, all_transactions, all_refunds, all_disputes, all_reputation
 
 
+def _compute_product_pool_embeddings() -> dict[str, list[float]]:
+    """Maps product name -> 768-dim Gemini embedding, computed once per
+    distinct product type in PRODUCT_POOL rather than once per merchant
+    listing -- every merchant in a category carries the identical catalog,
+    so the same ~60 (name, description) pairs get embedded regardless of
+    how many merchants (or how large a future dataset) reuses them. Returns
+    {} when GEMINI_API_KEY isn't configured -- seeding still works, products
+    just keep a null embedding and semantic search stays unavailable until
+    a key is added and this script is re-run with --reset."""
+    if not is_llm_configured():
+        print("GEMINI_API_KEY not configured -- skipping product embeddings (semantic search unavailable).")
+        return {}
+
+    entries = [(name, desc) for products in PRODUCT_POOL.values() for name, desc in products]
+    embeddings: dict[str, list[float]] = {}
+    chunk_size = 100
+    for i in range(0, len(entries), chunk_size):
+        chunk = entries[i : i + chunk_size]
+        texts = [f"{name}. {desc}" for name, desc in chunk]
+        result = embed_texts(texts)
+        if result is None:
+            print(f"embedding batch {i}-{i + len(chunk)} failed -- those product types will have no embedding.")
+            continue
+        for (name, _desc), vector in zip(chunk, result):
+            embeddings[name] = vector
+    print(f"computed embeddings for {len(embeddings)}/{len(entries)} distinct product types.")
+    return embeddings
+
+
 def insert_dataset(merchants, transactions, refunds, disputes, reputation, reset: bool = False):
     import psycopg
 
     load_dotenv()
     database_url = os.environ["DATABASE_URL"]
+    product_embeddings = _compute_product_pool_embeddings()
 
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -353,10 +386,11 @@ def insert_dataset(merchants, transactions, refunds, disputes, reputation, reset
                     (merchant.id, merchant.name, category_ids[merchant.category], merchant.declared_sla_days),
                 )
                 for product in merchant.products:
+                    embedding = product_embeddings.get(product["name"])
                     cur.execute(
                         """
-                        INSERT INTO products (id, merchant_id, category_id, name, description, price_paise)
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        INSERT INTO products (id, merchant_id, category_id, name, description, price_paise, embedding)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             product["id"],
@@ -365,6 +399,7 @@ def insert_dataset(merchants, transactions, refunds, disputes, reputation, reset
                             product["name"],
                             product["description"],
                             product["price_paise"],
+                            json.dumps(embedding) if embedding is not None else None,
                         ),
                     )
 

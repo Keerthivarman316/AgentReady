@@ -133,8 +133,8 @@ The one-sentence pitch: **most entries build an agent that shops; we build the t
 ## 7. Tech stack
 
 - **Backend:** FastAPI + LangGraph — Intent Agent, Buyer Agent (3-node decision stack), Readiness Agent, Composite Trust Engine, Benchmark Agent, Growth Advisor Agent, SLA Advisor, Mandate Issuer, Checkout Executor
-- **DB:** PostgreSQL + pgvector — semantic matching of natural-language goals against catalog embeddings; stores trust-score history per merchant for the Trust Mirror and Benchmark Agent
-- **LLM:** Gemini — intent parsing, readiness-gap reasoning, growth-fix explanation generation
+- **DB:** PostgreSQL — stores trust-score history per merchant for the Trust Mirror and Benchmark Agent. Product catalog embeddings (Gemini, 768-dim) power semantic search via cosine similarity computed in Python rather than pgvector, since this dev environment's Postgres has no pgvector extension available to install; see `db/schema.sql`
+- **LLM:** Gemini (`gemini-3.6-flash` for text/structured extraction, `gemini-embedding-001` for vectors) — buyer intent parsing, chat follow-up parsing, growth-fix explanation generation, and product catalog embeddings; every call site falls back to a deterministic non-LLM path when unconfigured or on failure
 - **Payments:** Razorpay test-mode APIs (Payments, Refunds, Settlements, Disputes) — real (test-mode) API responses, scripted transaction history
 - **Authorization:** AP2 mandate schema for the Intent → Buyer handoff
 - **Frontend:** Next.js + Tailwind — three surfaces: buyer chat with live decision trace, merchant Trust Mirror + Growth dashboard, audit trail viewer

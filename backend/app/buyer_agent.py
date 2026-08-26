@@ -64,7 +64,18 @@ def apply_hard_constraints(candidates: list[dict], budget_cap_paise: int, deadli
     name doesn't contain at least one of them — e.g. a goal that says
     "earbuds" must never surface a charger just because both are Electronics.
     A true cutoff before scoring starts, same as budget/deadline: no amount of
-    trust score should let the wrong product type outrank the right one."""
+    trust score should let the wrong product type outrank the right one.
+
+    A semantic-similarity fallback for the empty-keywords case was tried and
+    reverted: live testing against the real embeddings found similarity
+    scores don't reliably separate "the goal implies one specific product"
+    from "genuinely vague category browse" — a vague query ("electronics
+    under 4000") scored *higher* against one arbitrary product than a
+    genuinely specific one did, so no threshold could safely narrow one
+    without also wrongly narrowing the other. Semantic search is real and
+    available (see app/semantic_search.py, GET /products/search) but stays
+    an explicit, opt-in capability rather than an automatic hard-constraint
+    filter here."""
     survivors, rejected = [], []
     for c in candidates:
         reasons = []

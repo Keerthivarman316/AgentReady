@@ -20,6 +20,7 @@ from app.growth_advisor import advise_growth, simulate_what_if
 from app.intent_agent import IntentResolutionError, resolve_intent_to_mandate
 from app.lost_sale_signal import get_lost_sale_signal
 from app.readiness_agent import assess_catalog
+from app.semantic_search import find_similar_products
 from app.sla_advisor import advise_sla
 from app.text_extraction import extract_product_keywords
 from app.trust_engine import DEFAULT_WEIGHTS, score_merchant
@@ -102,6 +103,18 @@ def get_catalog():
             """
         )
         return {"categories": [{"name": name, "products": products} for name, products in cur.fetchall()]}
+
+
+@app.get("/products/search")
+def search_products(q: str, category_id: str, limit: int = 20):
+    """Direct semantic-search endpoint (cosine similarity over Gemini
+    embeddings, computed in Python — see app/semantic_search.py for why
+    this isn't a pgvector query) — same matcher the Buyer Agent falls back
+    to internally when a goal has no recognized product keyword. Returns []
+    rather than an error when unconfigured or nothing scores above
+    threshold, same contract as find_similar_products itself."""
+    with get_connection() as conn, conn.cursor() as cur:
+        return find_similar_products(cur, q, category_id, limit=limit)
 
 
 @app.get("/merchants")

@@ -1,7 +1,6 @@
 -- AgentReady schema
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS vector;
 
 CREATE TABLE IF NOT EXISTS categories (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -23,7 +22,16 @@ CREATE TABLE IF NOT EXISTS products (
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     price_paise BIGINT NOT NULL,
-    embedding vector(768),
+    -- 768-dim Gemini embedding (gemini-embedding-001), stored as a JSON
+    -- float array rather than a real `vector(768)` column: this project's
+    -- dev Postgres has no pgvector extension available to install (not an
+    -- oversight -- confirmed absent from pg_available_extensions, and the
+    -- install directory isn't writable from this environment either). A
+    -- deployment with pgvector available should switch this to
+    -- `vector(768)` + an ivfflat/hnsw index and do the similarity search in
+    -- SQL; here it's computed in Python (see app/semantic_search.py) over a
+    -- category-scoped row set, which is fine at this dataset's scale.
+    embedding JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
