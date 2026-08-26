@@ -35,7 +35,11 @@ CREATE TABLE IF NOT EXISTS products (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- One row per synthetic order/payment attempt (stands in for Razorpay Payments API data).
+-- One row per order/payment attempt. Most rows are synthetic (seeded history
+-- standing in for Razorpay Payments API data); `source` distinguishes those
+-- from rows a real Razorpay webhook delivery wrote (app/webhooks.py) — the
+-- Trust Engine's fetch_* functions aggregate over both identically, so a
+-- live event simply adds to what's already there, no separate code path.
 CREATE TABLE IF NOT EXISTS transactions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     merchant_id UUID NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
@@ -48,6 +52,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     -- For COD, the gap between order_created_at and payment_captured_at approximates
     -- delivery time, since capture only fires on delivery confirmation in that flow.
     payment_captured_at TIMESTAMPTZ,
+    source TEXT NOT NULL DEFAULT 'synthetic' CHECK (source IN ('synthetic', 'razorpay_live')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -57,6 +62,7 @@ CREATE TABLE IF NOT EXISTS refunds (
     reason_code TEXT NOT NULL,
     amount_paise BIGINT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('processed', 'pending', 'rejected')),
+    source TEXT NOT NULL DEFAULT 'synthetic' CHECK (source IN ('synthetic', 'razorpay_live')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -65,7 +71,19 @@ CREATE TABLE IF NOT EXISTS disputes (
     transaction_id UUID NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
     reason_code TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('open', 'won', 'lost')),
+    source TEXT NOT NULL DEFAULT 'synthetic' CHECK (source IN ('synthetic', 'razorpay_live')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Raw Razorpay webhook deliveries (app/webhooks.py), every event received,
+-- signature-verified, regardless of whether it was acted on. Separate from
+-- audit_trail, which is scoped to mandates/buyer decisions, not payment
+-- infrastructure events.
+CREATE TABLE IF NOT EXISTS razorpay_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_type TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Synthetic in the demo — stands in for a review-platform signal in production.

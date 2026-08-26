@@ -25,8 +25,10 @@ from app.sla_advisor import advise_sla
 from app.text_extraction import extract_product_keywords
 from app.trust_engine import DEFAULT_WEIGHTS, score_merchant
 from app.trust_mirror import build_trust_mirror
+from app.webhooks import router as webhooks_router
 
 app = FastAPI(title="AgentReady API")
+app.include_router(webhooks_router)
 
 @app.middleware("http")
 async def catch_unhandled_exceptions(request: Request, call_next):
