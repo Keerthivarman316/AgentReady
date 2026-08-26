@@ -226,7 +226,26 @@ def fetch_product(cur, product_id: str):
 
 
 def score_merchant(cur, merchant_id: str, product_id: str | None = None,
-                    weights: dict[str, float] | None = None) -> dict:
+                    weights: dict[str, float] | None = None,
+                    price_band_cache: dict[str, tuple[int, int]] | None = None) -> dict:
+    """`price_band_cache`, when given, is a caller-owned {category_id:
+    (band_min, band_max)} dict this function reads from and writes to
+    instead of re-querying fetch_price_band for a category it's already
+    seen. A category's price band doesn't depend on which merchant is being
+    scored, so a caller scoring many merchants in the same category in one
+    pass (buyer_agent.rank_by_trust, benchmark_agent.compute_category_scores)
+    should share one cache across the whole pass — without it, a category
+    with thousands of merchants (or a merchant with many products) turns
+    into thousands of near-identical round trips for the same answer.
+    Callers scoring a single merchant in isolation can omit it; each lookup
+    then costs one query, exactly as before this parameter existed."""
+    def _price_band(category_id: str) -> tuple[int, int]:
+        if price_band_cache is None:
+            return fetch_price_band(cur, category_id)
+        if category_id not in price_band_cache:
+            price_band_cache[category_id] = fetch_price_band(cur, category_id)
+        return price_band_cache[category_id]
+
     payment_trust = compute_payment_trust_score(fetch_payment_stats(cur, merchant_id))
     promise_keeping = compute_promise_keeping_score(fetch_promise_stats(cur, merchant_id))
     reputation = compute_reputation_score(fetch_reputation(cur, merchant_id))
@@ -236,7 +255,7 @@ def score_merchant(cur, merchant_id: str, product_id: str | None = None,
         if product is None:
             raise ValueError(f"product {product_id} not found")
         _, _, category_id, price_paise = product
-        band_min, band_max = fetch_price_band(cur, category_id)
+        band_min, band_max = _price_band(category_id)
         price_fit = compute_price_fit_score(price_paise, band_min, band_max)
     else:
         cur.execute(
@@ -249,7 +268,7 @@ def score_merchant(cur, merchant_id: str, product_id: str | None = None,
         else:
             fits = []
             for _, category_id, price_paise in products:
-                band_min, band_max = fetch_price_band(cur, category_id)
+                band_min, band_max = _price_band(category_id)
                 fits.append(compute_price_fit_score(price_paise, band_min, band_max))
             price_fit = sum(fits) / len(fits)
 

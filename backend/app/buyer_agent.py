@@ -97,8 +97,14 @@ def rank_by_trust(cur, candidates: list[dict], weights: dict | None = None) -> t
     flags it (reputation inconsistent with its own operational data) never
     reaches the buyer — quarantined, not merely ranked low."""
     ranked, quarantined = [], []
+    # All candidates here are already scoped to one category (fetch_candidates
+    # filters by category_id), so their price band is identical -- shared
+    # across every score_merchant call instead of re-querying it once per
+    # candidate. Matters once a search can have thousands of survivors.
+    price_band_cache: dict[str, tuple[int, int]] = {}
     for c in candidates:
-        result = score_merchant(cur, c["merchant_id"], product_id=c["product_id"], weights=weights)
+        result = score_merchant(cur, c["merchant_id"], product_id=c["product_id"], weights=weights,
+                                 price_band_cache=price_band_cache)
         enriched = {
             **c,
             "composite_score": result["composite_score"],

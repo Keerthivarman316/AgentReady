@@ -14,9 +14,13 @@ def compute_category_scores(cur, category_id: str, weights: dict | None = None) 
     cur.execute("SELECT DISTINCT merchant_id FROM products WHERE category_id = %s", (category_id,))
     merchant_ids = [str(row[0]) for row in cur.fetchall()]
 
+    # Shared across every merchant in this pass -- every merchant here sells
+    # into the same category, so without this, scoring N merchants each with
+    # M products re-fetches the identical price band N*M times.
+    price_band_cache: dict[str, tuple[int, int]] = {}
     scores = []
     for merchant_id in merchant_ids:
-        result = score_merchant(cur, merchant_id, product_id=None, weights=weights)
+        result = score_merchant(cur, merchant_id, product_id=None, weights=weights, price_band_cache=price_band_cache)
         scores.append({
             "merchant_id": merchant_id,
             "composite_score": result["composite_score"],

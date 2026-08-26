@@ -22,17 +22,31 @@ CREATE TABLE IF NOT EXISTS products (
     name TEXT NOT NULL,
     description TEXT NOT NULL,
     price_paise BIGINT NOT NULL,
-    -- 768-dim Gemini embedding (gemini-embedding-001), stored as a JSON
-    -- float array rather than a real `vector(768)` column: this project's
-    -- dev Postgres has no pgvector extension available to install (not an
-    -- oversight -- confirmed absent from pg_available_extensions, and the
-    -- install directory isn't writable from this environment either). A
-    -- deployment with pgvector available should switch this to
-    -- `vector(768)` + an ivfflat/hnsw index and do the similarity search in
-    -- SQL; here it's computed in Python (see app/semantic_search.py) over a
-    -- category-scoped row set, which is fine at this dataset's scale.
-    embedding JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One row per distinct product *type* (name+description pair), not per
+-- product row -- every merchant in a category carries the identical
+-- catalog, so the embedding for "Wireless Earbuds Pro" is the same
+-- regardless of which of thousands of merchants lists it. Joined on
+-- products.name at query time (see app/semantic_search.py) rather than
+-- duplicated onto every product row, which would otherwise multiply a
+-- 768-float embedding by the merchant count for no reason -- real
+-- storage cost at a 100x+ dataset scale (a few hundred thousand product
+-- rows would otherwise each carry their own ~10KB copy).
+--
+-- 768-dim Gemini embedding (gemini-embedding-001), stored as a JSON float
+-- array rather than a real `vector(768)` column: this project's dev
+-- Postgres has no pgvector extension available to install (not an
+-- oversight -- confirmed absent from pg_available_extensions, and the
+-- install directory isn't writable from this environment either). A
+-- deployment with pgvector available should switch this to `vector(768)`
+-- + an ivfflat/hnsw index and do the similarity search in SQL; here it's
+-- computed in Python (see app/semantic_search.py) over a category-scoped
+-- row set, which is fine at this dataset's scale.
+CREATE TABLE IF NOT EXISTS product_embeddings (
+    name TEXT PRIMARY KEY,
+    embedding JSONB NOT NULL
 );
 
 -- One row per order/payment attempt. Most rows are synthetic (seeded history
@@ -137,6 +151,10 @@ CREATE TABLE IF NOT EXISTS audit_trail (
 );
 
 CREATE INDEX IF NOT EXISTS idx_products_merchant ON products(merchant_id);
+-- Backs every category-scoped products query (price band, candidate
+-- fetch, semantic search) -- without it those become sequential scans of
+-- the whole products table once the dataset is large.
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_merchant ON transactions(merchant_id);
 CREATE INDEX IF NOT EXISTS idx_refunds_transaction ON refunds(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_disputes_transaction ON disputes(transaction_id);

@@ -19,6 +19,7 @@ import argparse
 import json
 import os
 import random
+import time
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
@@ -192,16 +193,30 @@ def _jittered_archetype(rng: random.Random, archetype: Archetype) -> Archetype:
     )
 
 
+def _merchant_prefixes(rng: random.Random, merchants_per_category: int) -> list[str]:
+    """`rng.sample` (no repeats) below `len(MERCHANT_NAME_PREFIXES)` (64) --
+    identical output to before this function existed, at any scale this
+    project ran at until now. Above that, sampling without replacement is
+    impossible (ValueError), so a 100x-scale dataset (thousands per
+    category) instead samples with replacement; `build_merchants` appends a
+    disambiguating index in that case, since plain reuse would collide."""
+    if merchants_per_category <= len(MERCHANT_NAME_PREFIXES):
+        return rng.sample(MERCHANT_NAME_PREFIXES, k=merchants_per_category)
+    return [rng.choice(MERCHANT_NAME_PREFIXES) for _ in range(merchants_per_category)]
+
+
 def build_merchants(rng: random.Random, merchants_per_category: int = MERCHANTS_PER_CATEGORY) -> list[Merchant]:
+    large_scale = merchants_per_category > len(MERCHANT_NAME_PREFIXES)
     merchants: list[Merchant] = []
     for category in CATEGORIES:
-        names = rng.sample(MERCHANT_NAME_PREFIXES, k=merchants_per_category)
+        names = _merchant_prefixes(rng, merchants_per_category)
         for i, prefix in enumerate(names):
             archetype = _jittered_archetype(rng, ARCHETYPES[i % len(ARCHETYPES)])
             suffix = category.split(" ")[0]
+            name = f"{prefix} {suffix} #{i + 1}" if large_scale else f"{prefix} {suffix}"
             merchant = Merchant(
                 id=str(uuid.uuid4()),
-                name=f"{prefix} {suffix}",
+                name=name,
                 category=category,
                 declared_sla_days=rng.choice([2, 3, 4, 5]),
                 archetype=archetype,
@@ -292,18 +307,16 @@ def build_transactions(rng: random.Random, merchant: Merchant, now: datetime):
     return transactions, refunds, disputes
 
 
-def generate_dataset(merchants_per_category: int = MERCHANTS_PER_CATEGORY):
-    rng = random.Random(SEED)
-    now = datetime.now(timezone.utc)
-
-    merchants = build_merchants(rng, merchants_per_category)
-
-    all_transactions = []
-    all_refunds = []
-    all_disputes = []
-    all_reputation = []
-
-    for merchant in merchants:
+def generate_batch_transactions(rng: random.Random, merchants_batch: list[Merchant], now: datetime):
+    """Transactions/refunds/disputes/reputation for one bounded batch of
+    merchants, not the whole dataset — insert_dataset calls this per batch
+    and discards the result after copying it to Postgres, so peak memory
+    stays proportional to `batch_size`, not to total dataset size. At a
+    100x-scale dataset (millions of transactions), holding it all in one
+    Python list at once would compete for RAM with Postgres itself on a
+    single dev machine."""
+    all_transactions, all_refunds, all_disputes, all_reputation = [], [], [], []
+    for merchant in merchants_batch:
         transactions, refunds, disputes = build_transactions(rng, merchant, now)
         all_transactions.extend(transactions)
         all_refunds.extend(refunds)
@@ -316,8 +329,7 @@ def generate_dataset(merchants_per_category: int = MERCHANTS_PER_CATEGORY):
                 "review_count": rng.randint(lo, hi),
             }
         )
-
-    return merchants, all_transactions, all_refunds, all_disputes, all_reputation
+    return all_transactions, all_refunds, all_disputes, all_reputation
 
 
 def _compute_product_pool_embeddings() -> dict[str, list[float]]:
@@ -336,12 +348,25 @@ def _compute_product_pool_embeddings() -> dict[str, list[float]]:
     entries = [(name, desc) for products in PRODUCT_POOL.values() for name, desc in products]
     embeddings: dict[str, list[float]] = {}
     chunk_size = 100
+    max_attempts = 3
     for i in range(0, len(entries), chunk_size):
         chunk = entries[i : i + chunk_size]
         texts = [f"{name}. {desc}" for name, desc in chunk]
-        result = embed_texts(texts)
+        result = None
+        for attempt in range(1, max_attempts + 1):
+            result = embed_texts(texts)
+            if result is not None:
+                break
+            # embed_texts swallows the actual error (network hiccup, transient
+            # rate limit, etc. all just return None) -- a short retry is
+            # cheap insurance for a step this small (one batch, 60 items) but
+            # important not to silently drop, since the whole product catalog
+            # loses semantic search for a run if it's skipped.
+            print(f"embedding batch {i}-{i + len(chunk)} attempt {attempt}/{max_attempts} failed, retrying...")
+            time.sleep(2 * attempt)
         if result is None:
-            print(f"embedding batch {i}-{i + len(chunk)} failed -- those product types will have no embedding.")
+            print(f"embedding batch {i}-{i + len(chunk)} failed after {max_attempts} attempts -- "
+                  f"those product types will have no embedding.")
             continue
         for (name, _desc), vector in zip(chunk, result):
             embeddings[name] = vector
@@ -349,12 +374,39 @@ def _compute_product_pool_embeddings() -> dict[str, list[float]]:
     return embeddings
 
 
-def insert_dataset(merchants, transactions, refunds, disputes, reputation, reset: bool = False):
+def _copy_rows(cur, table: str, columns: list[str], rows: list[tuple]) -> None:
+    """Bulk-loads `rows` via COPY FROM STDIN rather than one INSERT per row
+    -- at a 100x-scale dataset (millions of transaction rows), row-by-row
+    execute() round trips would take on the order of an hour; COPY does the
+    same load in seconds. Columns not listed here get their schema default
+    (or NULL) applied automatically, same as with INSERT."""
+    if not rows:
+        return
+    col_list = ", ".join(columns)
+    with cur.copy(f"COPY {table} ({col_list}) FROM STDIN") as copy:
+        for row in rows:
+            copy.write_row(row)
+
+
+def insert_dataset(rng: random.Random, merchants: list[Merchant], reset: bool = False,
+                    batch_size: int = 200, progress: bool = True) -> None:
+    """`rng` must be the same generator `build_merchants` already advanced --
+    transaction generation continues that one seeded stream rather than
+    starting a fresh one, so the whole run stays deterministic end to end
+    for a given SEED, exactly as it was before this function was split into
+    batches.
+
+    Processes merchants in batches of `batch_size`: generates that batch's
+    transactions/refunds/disputes/reputation, COPYs them, and discards them
+    before moving to the next batch, so peak memory is bounded by
+    `batch_size` regardless of total dataset size (see
+    generate_batch_transactions's docstring)."""
     import psycopg
 
     load_dotenv()
     database_url = os.environ["DATABASE_URL"]
     product_embeddings = _compute_product_pool_embeddings()
+    now = datetime.now(timezone.utc)
 
     with psycopg.connect(database_url) as conn:
         with conn.cursor() as cur:
@@ -362,8 +414,17 @@ def insert_dataset(merchants, transactions, refunds, disputes, reputation, reset
                 # Cascades to products, transactions, refunds, disputes, reputation,
                 # and trust_score_history via their ON DELETE CASCADE FKs — makes
                 # re-running the generator while tuning archetypes/volume safe
-                # instead of duplicating merchants on every run.
+                # instead of duplicating merchants on every run. product_embeddings
+                # has no FK to merchants (keyed by product name, not id), so it
+                # isn't touched by the cascade -- and is only truncated here if the
+                # recompute above actually got something back. Wiping it
+                # unconditionally would mean a transient embedding-API failure (rate
+                # limit, network blip) permanently destroys previously-good
+                # embeddings for no reason -- upsert-by-name (below) refreshes
+                # existing rows in place when the recompute does succeed.
                 cur.execute("TRUNCATE merchants CASCADE")
+                if not product_embeddings:
+                    print("  no embeddings computed this run -- leaving product_embeddings untouched.")
 
             category_ids = {}
             for name in CATEGORIES:
@@ -376,75 +437,83 @@ def insert_dataset(merchants, transactions, refunds, disputes, reputation, reset
                     (name,),
                 )
                 category_ids[name] = cur.fetchone()[0]
-
-            for merchant in merchants:
-                cur.execute(
-                    """
-                    INSERT INTO merchants (id, name, category_id, declared_sla_days)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (merchant.id, merchant.name, category_ids[merchant.category], merchant.declared_sla_days),
-                )
-                for product in merchant.products:
-                    embedding = product_embeddings.get(product["name"])
-                    cur.execute(
-                        """
-                        INSERT INTO products (id, merchant_id, category_id, name, description, price_paise, embedding)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            product["id"],
-                            merchant.id,
-                            category_ids[merchant.category],
-                            product["name"],
-                            product["description"],
-                            product["price_paise"],
-                            json.dumps(embedding) if embedding is not None else None,
-                        ),
-                    )
-
-            for txn in transactions:
-                cur.execute(
-                    """
-                    INSERT INTO transactions
-                        (id, merchant_id, product_id, amount_paise, payment_method,
-                         status, order_created_at, payment_captured_at)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        txn["id"], txn["merchant_id"], txn["product_id"], txn["amount_paise"],
-                        txn["payment_method"], txn["status"], txn["order_created_at"], txn["payment_captured_at"],
-                    ),
-                )
-
-            for refund in refunds:
-                cur.execute(
-                    """
-                    INSERT INTO refunds (id, transaction_id, reason_code, amount_paise, status)
-                    VALUES (%s, %s, %s, %s, %s)
-                    """,
-                    (refund["id"], refund["transaction_id"], refund["reason_code"], refund["amount_paise"], refund["status"]),
-                )
-
-            for dispute in disputes:
-                cur.execute(
-                    """
-                    INSERT INTO disputes (id, transaction_id, reason_code, status)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (dispute["id"], dispute["transaction_id"], dispute["reason_code"], dispute["status"]),
-                )
-
-            for rep in reputation:
-                cur.execute(
-                    """
-                    INSERT INTO reputation (merchant_id, avg_rating, review_count)
-                    VALUES (%s, %s, %s)
-                    """,
-                    (rep["merchant_id"], rep["avg_rating"], rep["review_count"]),
-                )
-
         conn.commit()
+
+        with conn.cursor() as cur:
+            _copy_rows(
+                cur, "merchants", ["id", "name", "category_id", "declared_sla_days"],
+                [(m.id, m.name, category_ids[m.category], m.declared_sla_days) for m in merchants],
+            )
+        conn.commit()
+        if progress:
+            print(f"  merchants: {len(merchants)} rows copied.", flush=True)
+
+        with conn.cursor() as cur:
+            product_rows = [
+                (p["id"], m.id, category_ids[m.category], p["name"], p["description"], p["price_paise"])
+                for m in merchants for p in m.products
+            ]
+            _copy_rows(cur, "products", ["id", "merchant_id", "category_id", "name", "description", "price_paise"],
+                       product_rows)
+        conn.commit()
+        if progress:
+            print(f"  products: {len(product_rows)} rows copied.", flush=True)
+
+        with conn.cursor() as cur:
+            for prod_name, vector in product_embeddings.items():
+                cur.execute(
+                    """
+                    INSERT INTO product_embeddings (name, embedding) VALUES (%s, %s)
+                    ON CONFLICT (name) DO UPDATE SET embedding = EXCLUDED.embedding
+                    """,
+                    (prod_name, json.dumps(vector)),
+                )
+        conn.commit()
+        if progress:
+            print(f"  product_embeddings: {len(product_embeddings)} rows upserted.", flush=True)
+
+        total_txns = total_refunds = total_disputes = total_reputation = 0
+        for batch_start in range(0, len(merchants), batch_size):
+            batch = merchants[batch_start : batch_start + batch_size]
+            transactions, refunds, disputes, reputation = generate_batch_transactions(rng, batch, now)
+
+            with conn.cursor() as cur:
+                _copy_rows(
+                    cur, "transactions",
+                    ["id", "merchant_id", "product_id", "amount_paise", "payment_method",
+                     "status", "order_created_at", "payment_captured_at"],
+                    [
+                        (t["id"], t["merchant_id"], t["product_id"], t["amount_paise"], t["payment_method"],
+                         t["status"], t["order_created_at"], t["payment_captured_at"])
+                        for t in transactions
+                    ],
+                )
+                _copy_rows(
+                    cur, "refunds", ["id", "transaction_id", "reason_code", "amount_paise", "status"],
+                    [(r["id"], r["transaction_id"], r["reason_code"], r["amount_paise"], r["status"]) for r in refunds],
+                )
+                _copy_rows(
+                    cur, "disputes", ["id", "transaction_id", "reason_code", "status"],
+                    [(d["id"], d["transaction_id"], d["reason_code"], d["status"]) for d in disputes],
+                )
+                _copy_rows(
+                    cur, "reputation", ["merchant_id", "avg_rating", "review_count"],
+                    [(r["merchant_id"], r["avg_rating"], r["review_count"]) for r in reputation],
+                )
+            conn.commit()
+
+            total_txns += len(transactions)
+            total_refunds += len(refunds)
+            total_disputes += len(disputes)
+            total_reputation += len(reputation)
+            if progress:
+                done = batch_start + len(batch)
+                print(f"  seeded {done}/{len(merchants)} merchants "
+                      f"({total_txns} txns, {total_refunds} refunds, {total_disputes} disputes so far)...", flush=True)
+
+        if progress:
+            print(f"  totals: {total_txns} transactions, {total_refunds} refunds, "
+                  f"{total_disputes} disputes, {total_reputation} reputation rows.")
 
 
 def main():
@@ -455,26 +524,46 @@ def main():
         "--merchants-per-category", type=int, default=MERCHANTS_PER_CATEGORY,
         help=f"merchants to generate per category (default {MERCHANTS_PER_CATEGORY})",
     )
+    parser.add_argument(
+        "--batch-size", type=int, default=200,
+        help="merchants per transaction-generation/COPY batch (default 200) -- bounds peak memory at large scale",
+    )
     args = parser.parse_args()
 
-    merchants, transactions, refunds, disputes, reputation = generate_dataset(args.merchants_per_category)
+    rng = random.Random(SEED)
+    merchants = build_merchants(rng, args.merchants_per_category)
 
     print(f"Merchants: {len(merchants)} ({args.merchants_per_category} per category x {len(CATEGORIES)} categories)")
     for category in CATEGORIES:
         in_category = [m for m in merchants if m.category == category]
         products_in_category = sum(len(m.products) for m in in_category)
-        print(f"  - {category:24s} merchants={len(in_category):3d} products={products_in_category:4d}")
+        print(f"  - {category:24s} merchants={len(in_category):6d} products={products_in_category:7d}")
     print(f"Products: {sum(len(m.products) for m in merchants)}")
-    print(f"Transactions: {len(transactions)}")
-    print(f"Refunds: {len(refunds)}")
-    print(f"Disputes: {len(disputes)}")
-    print(f"Reputation rows: {len(reputation)}")
 
     if args.dry_run:
+        # Estimated, not exact: doesn't materialize every transaction/refund/
+        # dispute dict just to count them (at 100x scale that's millions of
+        # dicts for a summary line) -- expected value from each merchant's
+        # archetype rates instead. insert_dataset's actual per-transaction
+        # RNG draws (and its printed totals) are the real numbers.
+        est_txns = sum(sum(m.archetype.txn_count_range) / 2 for m in merchants)
+        est_captured = sum(sum(m.archetype.txn_count_range) / 2 * m.archetype.payment_success_rate for m in merchants)
+        est_refunds = sum(
+            sum(m.archetype.txn_count_range) / 2 * m.archetype.payment_success_rate * m.archetype.refund_rate
+            for m in merchants
+        )
+        est_disputes = sum(
+            sum(m.archetype.txn_count_range) / 2 * m.archetype.payment_success_rate * m.archetype.dispute_rate
+            for m in merchants
+        )
+        print(f"Transactions: ~{est_txns:,.0f} (estimated from archetype rates, {est_captured:,.0f} captured)")
+        print(f"Refunds: ~{est_refunds:,.0f} (estimated)")
+        print(f"Disputes: ~{est_disputes:,.0f} (estimated)")
+        print(f"Reputation rows: {len(merchants)}")
         print("\n--dry-run set: nothing written to the database.")
         return
 
-    insert_dataset(merchants, transactions, refunds, disputes, reputation, reset=args.reset)
+    insert_dataset(rng, merchants, reset=args.reset, batch_size=args.batch_size)
     print("\nInserted synthetic dataset into DATABASE_URL.")
 
 
