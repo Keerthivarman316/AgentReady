@@ -32,8 +32,10 @@ from __future__ import annotations
 
 import os
 import uuid
+from typing import Any, Callable, TypedDict
 
 import razorpay
+from langgraph.graph import END, StateGraph
 
 from app.audit_trail import log_audit
 
@@ -81,43 +83,99 @@ def create_test_order(candidate: dict, receipt: str) -> dict:
     }
 
 
+class CheckoutState(TypedDict, total=False):
+    """Runs in-process with no checkpointer, same as buyer_agent's decision
+    graph — `cur` and `create_order_fn` are live Python objects, never
+    serialized. `rank` advances on every failed attempt, modeling the
+    fallback cascade as a real conditional self-loop on `attempt` instead of
+    a plain `for` loop."""
+    cur: Any
+    mandate_id: str
+    candidates: list[dict]
+    create_order_fn: Callable[[dict], dict]
+    force_fail_ranks: set[int]
+    rank: int
+    result: dict
+
+
+def _node_attempt(state: CheckoutState) -> dict:
+    cur, mandate_id = state["cur"], state["mandate_id"]
+    rank, candidates = state["rank"], state["candidates"]
+    candidate = candidates[rank]
+
+    log_audit(cur, mandate_id, "checkout_attempt", {
+        "rank": rank, "merchant_name": candidate["merchant_name"], "product_name": candidate["product_name"],
+    })
+    try:
+        if rank in state.get("force_fail_ranks", set()):
+            raise SimulatedCheckoutFailure("scripted failure (demo): forced for this rank")
+        order = state["create_order_fn"](candidate)
+    except Exception as exc:
+        log_audit(cur, mandate_id, "checkout_failure", {
+            "rank": rank, "merchant_name": candidate["merchant_name"], "error": str(exc),
+            "simulated": isinstance(exc, SimulatedCheckoutFailure),
+        })
+        if rank + 1 < len(candidates):
+            log_audit(cur, mandate_id, "checkout_fallback", {
+                "from_rank": rank, "to_rank": rank + 1, "to_merchant": candidates[rank + 1]["merchant_name"],
+            })
+        return {"rank": rank + 1}
+
+    log_audit(cur, mandate_id, "checkout_success", {
+        "rank": rank, "merchant_name": candidate["merchant_name"], "order_id": order.get("id"),
+        "simulated": bool(order.get("simulated")), "settlement_note": order.get("settlement_note"),
+    })
+    return {"result": {
+        "status": "success", "rank": rank,
+        "merchant_id": candidate["merchant_id"], "product_id": candidate["product_id"], "order": order,
+    }}
+
+
+def _node_exhausted(state: CheckoutState) -> dict:
+    log_audit(state["cur"], state["mandate_id"], "checkout_exhausted", {"attempted": len(state["candidates"])})
+    return {"result": {"status": "exhausted", "attempted": len(state["candidates"])}}
+
+
+def _route_entry(state: CheckoutState) -> str:
+    return "attempt" if state["candidates"] else "exhausted"
+
+
+def _route_after_attempt(state: CheckoutState) -> str:
+    if "result" in state:
+        return "done"
+    return "attempt" if state["rank"] < len(state["candidates"]) else "exhausted"
+
+
+def _build_checkout_graph():
+    graph = StateGraph(CheckoutState)
+    graph.add_node("attempt", _node_attempt)
+    graph.add_node("exhausted", _node_exhausted)
+
+    graph.set_conditional_entry_point(_route_entry, {"attempt": "attempt", "exhausted": "exhausted"})
+    graph.add_conditional_edges("attempt", _route_after_attempt, {
+        "attempt": "attempt", "exhausted": "exhausted", "done": END,
+    })
+    graph.add_edge("exhausted", END)
+    return graph.compile()
+
+
+checkout_graph = _build_checkout_graph()
+
+
 def checkout_with_fallback(cur, mandate_id: str, ranked_candidates: list[dict], create_order_fn=None,
                             force_fail_ranks: set[int] | None = None) -> dict:
     if create_order_fn is None:
         # Razorpay caps `receipt` at 56 chars; two full UUIDs joined ("mandate-product") is 73,
         # so truncate the mandate id down to keep the receipt under the limit.
         create_order_fn = lambda candidate: create_test_order(candidate, receipt=f"{mandate_id[:8]}-{candidate['product_id']}")
-    force_fail_ranks = force_fail_ranks or set()
 
-    for rank, candidate in enumerate(ranked_candidates):
-        log_audit(cur, mandate_id, "checkout_attempt", {
-            "rank": rank, "merchant_name": candidate["merchant_name"], "product_name": candidate["product_name"],
-        })
-        try:
-            if rank in force_fail_ranks:
-                raise SimulatedCheckoutFailure("scripted failure (demo): forced for this rank")
-            order = create_order_fn(candidate)
-        except Exception as exc:
-            log_audit(cur, mandate_id, "checkout_failure", {
-                "rank": rank, "merchant_name": candidate["merchant_name"], "error": str(exc),
-                "simulated": isinstance(exc, SimulatedCheckoutFailure),
-            })
-            if rank + 1 < len(ranked_candidates):
-                log_audit(cur, mandate_id, "checkout_fallback", {
-                    "from_rank": rank, "to_rank": rank + 1,
-                    "to_merchant": ranked_candidates[rank + 1]["merchant_name"],
-                })
-            continue
-
-        log_audit(cur, mandate_id, "checkout_success", {
-            "rank": rank, "merchant_name": candidate["merchant_name"], "order_id": order.get("id"),
-            "simulated": bool(order.get("simulated")),
-            "settlement_note": order.get("settlement_note"),
-        })
-        return {
-            "status": "success", "rank": rank,
-            "merchant_id": candidate["merchant_id"], "product_id": candidate["product_id"], "order": order,
-        }
-
-    log_audit(cur, mandate_id, "checkout_exhausted", {"attempted": len(ranked_candidates)})
-    return {"status": "exhausted", "attempted": len(ranked_candidates)}
+    # Each fallback attempt is one graph superstep; the default recursion
+    # limit (25) is too low for a category with more merchants than that.
+    result = checkout_graph.invoke(
+        {
+            "cur": cur, "mandate_id": mandate_id, "candidates": ranked_candidates,
+            "create_order_fn": create_order_fn, "force_fail_ranks": force_fail_ranks or set(), "rank": 0,
+        },
+        config={"recursion_limit": max(50, len(ranked_candidates) + 10)},
+    )
+    return result["result"]

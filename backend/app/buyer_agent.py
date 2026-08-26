@@ -15,6 +15,10 @@ Every layer's output is written to the audit trail as it runs.
 
 from __future__ import annotations
 
+from typing import Any, Callable, TypedDict
+
+from langgraph.graph import END, StateGraph
+
 from app.audit_trail import log_audit
 from app.text_extraction import extract_product_keywords
 from app.trust_engine import compute_composite, compute_price_fit_score, fetch_price_band, score_merchant
@@ -173,26 +177,50 @@ def apply_counter_offer(cur, ranked_candidates: list[dict], category_id: str,
     return [promoted, displaced] + ranked_candidates[2:], offer
 
 
-def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_price_lookup=None) -> dict:
-    mandate_id = mandate["id"]
-    candidates = fetch_candidates(cur, mandate["category_id"])
-    product_keywords = extract_product_keywords(mandate.get("goal_text") or "")
+class BuyerDecisionState(TypedDict, total=False):
+    """Carries a live `cur` through the graph the same way it was threaded
+    through the old direct call chain — this graph runs in-process with no
+    checkpointer, so nothing here is ever serialized."""
+    cur: Any
+    mandate_id: str
+    category_id: str
+    budget_cap_paise: int
+    deadline_days: int
+    goal_text: str
+    weights: dict | None
+    live_price_lookup: Callable | None
+    candidates: list[dict]
+    product_keywords: list[str]
+    survivors: list[dict]
+    ranked: list[dict]
+    quarantined: list[dict]
+    optimized: list[dict]
+    final_ranking: list[dict]
+    counter_offer: dict | None
+    status: str
 
+
+def _node_fetch_and_constrain(state: BuyerDecisionState) -> dict:
+    cur, mandate_id = state["cur"], state["mandate_id"]
+    candidates = fetch_candidates(cur, state["category_id"])
+    product_keywords = extract_product_keywords(state.get("goal_text") or "")
     survivors, rejected = apply_hard_constraints(
-        candidates, mandate["budget_cap_paise"], mandate["deadline_days"], product_keywords
+        candidates, state["budget_cap_paise"], state["deadline_days"], product_keywords
     )
     log_audit(cur, mandate_id, "hard_constraints", {
-        "candidates_in": len(candidates),
-        "survivors": len(survivors),
-        "rejected": rejected,
-        "product_keywords": product_keywords,
+        "candidates_in": len(candidates), "survivors": len(survivors),
+        "rejected": rejected, "product_keywords": product_keywords,
     })
+    return {"candidates": candidates, "product_keywords": product_keywords, "survivors": survivors}
 
-    if not survivors:
-        log_audit(cur, mandate_id, "decision", {"status": "no_candidates"})
-        return {"status": "no_candidates", "ranking": []}
 
-    ranked, quarantined = rank_by_trust(cur, survivors, weights)
+def _route_after_constraints(state: BuyerDecisionState) -> str:
+    return "rank" if state["survivors"] else "no_candidates"
+
+
+def _node_rank(state: BuyerDecisionState) -> dict:
+    cur, mandate_id = state["cur"], state["mandate_id"]
+    ranked, quarantined = rank_by_trust(cur, state["survivors"], state["weights"])
     log_audit(cur, mandate_id, "trust_integrity", {
         "quarantined_count": len(quarantined),
         "reasons": [
@@ -200,11 +228,15 @@ def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_pri
             for c in quarantined
         ],
     })
+    return {"ranked": ranked, "quarantined": quarantined}
 
-    if not ranked:
-        log_audit(cur, mandate_id, "decision", {"status": "no_candidates"})
-        return {"status": "no_candidates", "ranking": [], "quarantined_count": len(quarantined)}
 
+def _route_after_rank(state: BuyerDecisionState) -> str:
+    return "optimize" if state["ranked"] else "no_candidates"
+
+
+def _node_optimize(state: BuyerDecisionState) -> dict:
+    cur, mandate_id, ranked = state["cur"], state["mandate_id"], state["ranked"]
     log_audit(cur, mandate_id, "heuristics", {
         "weights_used": ranked[0]["weights_used"],
         "ranking": [
@@ -215,22 +247,74 @@ def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_pri
             for i, c in enumerate(ranked)
         ],
     })
-
-    optimized = real_time_optimize(ranked, live_price_lookup)
+    optimized = real_time_optimize(ranked, state.get("live_price_lookup"))
     log_audit(cur, mandate_id, "real_time_optimize", {
         "final_order": [
             {"merchant_name": c["merchant_name"], "product_name": c["product_name"]}
             for c in optimized
         ],
     })
+    return {"optimized": optimized}
 
-    final_ranking, counter_offer = apply_counter_offer(cur, optimized, mandate["category_id"], weights)
+
+def _node_counter_offer(state: BuyerDecisionState) -> dict:
+    cur, mandate_id = state["cur"], state["mandate_id"]
+    final_ranking, counter_offer = apply_counter_offer(
+        cur, state["optimized"], state["category_id"], state["weights"]
+    )
     if counter_offer:
         log_audit(cur, mandate_id, "counter_offer", counter_offer)
+    return {"final_ranking": final_ranking, "counter_offer": counter_offer, "status": "ranked"}
 
-    return {
-        "status": "ranked",
-        "ranking": final_ranking,
-        "quarantined_count": len(quarantined),
-        "counter_offer": counter_offer,
-    }
+
+def _node_no_candidates(state: BuyerDecisionState) -> dict:
+    log_audit(state["cur"], state["mandate_id"], "decision", {"status": "no_candidates"})
+    result = {"status": "no_candidates", "final_ranking": []}
+    if "quarantined" in state:
+        result["quarantined_count"] = len(state["quarantined"])
+    return result
+
+
+def _build_buyer_decision_graph():
+    graph = StateGraph(BuyerDecisionState)
+    graph.add_node("fetch_and_constrain", _node_fetch_and_constrain)
+    graph.add_node("rank", _node_rank)
+    graph.add_node("optimize", _node_optimize)
+    graph.add_node("apply_counter_offer_step", _node_counter_offer)
+    graph.add_node("no_candidates", _node_no_candidates)
+
+    graph.set_entry_point("fetch_and_constrain")
+    graph.add_conditional_edges("fetch_and_constrain", _route_after_constraints, {
+        "rank": "rank", "no_candidates": "no_candidates",
+    })
+    graph.add_conditional_edges("rank", _route_after_rank, {
+        "optimize": "optimize", "no_candidates": "no_candidates",
+    })
+    graph.add_edge("optimize", "apply_counter_offer_step")
+    graph.add_edge("apply_counter_offer_step", END)
+    graph.add_edge("no_candidates", END)
+    return graph.compile()
+
+
+buyer_decision_graph = _build_buyer_decision_graph()
+
+
+def run_buyer_pipeline(cur, mandate: dict, weights: dict | None = None, live_price_lookup=None) -> dict:
+    result = buyer_decision_graph.invoke({
+        "cur": cur,
+        "mandate_id": mandate["id"],
+        "category_id": mandate["category_id"],
+        "budget_cap_paise": mandate["budget_cap_paise"],
+        "deadline_days": mandate["deadline_days"],
+        "goal_text": mandate.get("goal_text") or "",
+        "weights": weights,
+        "live_price_lookup": live_price_lookup,
+    })
+
+    output = {"status": result["status"], "ranking": result["final_ranking"]}
+    if result["status"] == "ranked":
+        output["quarantined_count"] = len(result.get("quarantined", []))
+        output["counter_offer"] = result.get("counter_offer")
+    elif "quarantined_count" in result:
+        output["quarantined_count"] = result["quarantined_count"]
+    return output
