@@ -298,6 +298,23 @@ export default function BuyerPage() {
             <Link href={`/audit?mandate_id=${mandate.mandate_id}`} className="mt-2 inline-block text-xs text-primary hover:underline">
               View full audit trail →
             </Link>
+            <details className="mt-3 rounded-md border border-border/60 bg-muted/30 p-2 text-xs">
+              <summary className="cursor-pointer select-none font-medium text-muted-foreground">
+                AP2 mandate (spec-shaped)
+              </summary>
+              <p className="mt-2 text-muted-foreground/80">
+                Open Checkout Mandate and Open Payment Mandate, shaped to match Google&apos;s Agent Payments
+                Protocol JSON Schemas verbatim. Signed with this project&apos;s HMAC secret rather than the
+                spec&apos;s ES256/JWS signing chain.
+              </p>
+              <pre className="mt-2 max-h-64 overflow-auto rounded bg-background p-2 text-[11px] leading-snug">
+                {JSON.stringify(
+                  { ap2_open_checkout_mandate: mandate.ap2_open_checkout_mandate, ap2_open_payment_mandate: mandate.ap2_open_payment_mandate },
+                  null,
+                  2
+                )}
+              </pre>
+            </details>
           </CardContent>
         </Card>
       )}
@@ -403,7 +420,22 @@ export default function BuyerPage() {
                   </Badge>
                 )}
               </div>
-            ) : (
+            ) : null}
+            {checkout.status === "success" && checkout.ap2_checkout_mandate && (
+              <details className="mt-3 rounded-md border border-border/60 bg-muted/30 p-2 text-xs">
+                <summary className="cursor-pointer select-none font-medium text-muted-foreground">
+                  AP2 mandate (spec-shaped)
+                </summary>
+                <pre className="mt-2 max-h-64 overflow-auto rounded bg-background p-2 text-[11px] leading-snug">
+                  {JSON.stringify(
+                    { ap2_checkout_mandate: checkout.ap2_checkout_mandate, ap2_payment_mandate: checkout.ap2_payment_mandate },
+                    null,
+                    2
+                  )}
+                </pre>
+              </details>
+            )}
+            {checkout.status !== "success" && (
               <p className="text-sm text-destructive">
                 Exhausted all {checkout.attempted} candidates — none completed checkout.
               </p>

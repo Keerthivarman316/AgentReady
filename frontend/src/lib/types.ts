@@ -130,6 +130,13 @@ export interface ReadinessResult {
   item_count: number;
 }
 
+// Spec-shaped mandates matching AP2 (Google's Agent Payments Protocol) JSON
+// Schemas verbatim (see backend/app/ap2_schemas/) — deliberately typed as
+// `Record<string, unknown>` rather than modeled field-by-field, since the
+// UI only ever displays these as read-only JSON, never reads individual
+// fields out of them.
+export type Ap2Mandate = Record<string, unknown>;
+
 export interface IntentResult {
   mandate_id: string;
   category_id: string;
@@ -138,6 +145,8 @@ export interface IntentResult {
   mandate_hash: string;
   issued_at: string;
   expires_at: string;
+  ap2_open_checkout_mandate: Ap2Mandate;
+  ap2_open_payment_mandate: Ap2Mandate;
 }
 
 export interface RankedCandidate {
@@ -180,6 +189,8 @@ export interface CheckoutResult {
   product_id?: string;
   order?: { id: string; simulated?: boolean; settlement_note?: string };
   attempted?: number;
+  ap2_checkout_mandate?: Ap2Mandate;
+  ap2_payment_mandate?: Ap2Mandate;
 }
 
 export interface CatalogResult {

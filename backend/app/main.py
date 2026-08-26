@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 logger = logging.getLogger("agentready")
 
+from app.ap2_mandate import build_open_checkout_mandate, build_open_payment_mandate
 from app.audit_trail import fetch_audit_trail, log_audit
 from app.benchmark_agent import benchmark_merchant
 from app.buyer_agent import run_buyer_pipeline
@@ -20,6 +21,7 @@ from app.intent_agent import IntentResolutionError, resolve_intent_to_mandate
 from app.lost_sale_signal import get_lost_sale_signal
 from app.readiness_agent import assess_catalog
 from app.sla_advisor import advise_sla
+from app.text_extraction import extract_category, extract_product_keywords
 from app.trust_engine import DEFAULT_WEIGHTS, score_merchant
 from app.trust_mirror import build_trust_mirror
 
@@ -211,6 +213,20 @@ def create_intent(req: IntentRequest):
         })
         conn.commit()
 
+    # AP2 spec-shaped mandates alongside the existing HMAC one — re-derives
+    # category/keywords from goal_text with the same pure extractors the
+    # graph already used, rather than threading intermediate state out of
+    # resolve_intent_to_mandate just for this. See app/ap2_mandate.py.
+    ap2_open_checkout_mandate = build_open_checkout_mandate(
+        category_name=extract_category(mandate.goal_text) or "",
+        product_keywords=extract_product_keywords(mandate.goal_text),
+        issued_at=mandate.issued_at, expires_at=mandate.expires_at,
+    )
+    ap2_open_payment_mandate = build_open_payment_mandate(
+        ap2_open_checkout_mandate, mandate.budget_cap_paise, mandate.deadline_days,
+        mandate.issued_at, mandate.expires_at,
+    )
+
     return {
         "mandate_id": str(mandate_id),
         "category_id": mandate.category_id,
@@ -219,6 +235,8 @@ def create_intent(req: IntentRequest):
         "mandate_hash": mandate.mandate_hash,
         "issued_at": mandate.issued_at.isoformat(),
         "expires_at": mandate.expires_at.isoformat(),
+        "ap2_open_checkout_mandate": ap2_open_checkout_mandate,
+        "ap2_open_payment_mandate": ap2_open_payment_mandate,
     }
 
 

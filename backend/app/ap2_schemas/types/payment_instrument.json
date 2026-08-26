@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ap2-protocol.org/schemas/types/payment_instrument.json",
+  "x-vendored-from": "https://github.com/google-agentic-commerce/AP2/blob/main/code/sdk/schemas/ap2/types/payment_instrument.json",
+  "x-vendored-license": "Apache-2.0 (c) Google, per https://github.com/google-agentic-commerce/AP2/blob/main/LICENSE",
+  "title": "Payment Instrument",
+  "description": "Instrument used for payment.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "unique identifier for this instrument"
+    },
+    "type": {
+      "type": "string",
+      "description": "unique string identifying this category of instrument"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of the instrument to be displayed to the user for informational purposes"
+    }
+  },
+  "required": [
+    "id",
+    "type"
+  ]
+}

@@ -37,6 +37,7 @@ from typing import Any, Callable, TypedDict
 import razorpay
 from langgraph.graph import END, StateGraph
 
+from app.ap2_mandate import build_checkout_mandate, build_payment_mandate
 from app.audit_trail import log_audit
 
 
@@ -125,9 +126,23 @@ def _node_attempt(state: CheckoutState) -> dict:
         "rank": rank, "merchant_name": candidate["merchant_name"], "order_id": order.get("id"),
         "simulated": bool(order.get("simulated")), "settlement_note": order.get("settlement_note"),
     })
+
+    # AP2 spec-shaped mandates issued alongside the order — see
+    # app/ap2_mandate.py for what "spec-shaped" does and doesn't mean here.
+    ap2_checkout_mandate = build_checkout_mandate(
+        mandate_id=mandate_id, merchant_id=candidate["merchant_id"], merchant_name=candidate["merchant_name"],
+        product_id=candidate["product_id"], product_name=candidate["product_name"],
+        price_paise=candidate["price_paise"],
+    )
+    ap2_payment_mandate = build_payment_mandate(
+        ap2_checkout_mandate, merchant_id=candidate["merchant_id"], merchant_name=candidate["merchant_name"],
+        price_paise=order.get("amount", candidate["price_paise"]), order_id=order.get("id", ""),
+        simulated=bool(order.get("simulated")),
+    )
     return {"result": {
         "status": "success", "rank": rank,
         "merchant_id": candidate["merchant_id"], "product_id": candidate["product_id"], "order": order,
+        "ap2_checkout_mandate": ap2_checkout_mandate, "ap2_payment_mandate": ap2_payment_mandate,
     }}
 
 
