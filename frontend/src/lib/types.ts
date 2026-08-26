@@ -75,6 +75,7 @@ export interface GrowthAdvisorResult {
   benchmark: BenchmarkResult;
   fixes: GrowthFix[];
   persona_breakdown: Record<string, PersonaStanding>;
+  summary: string;
 }
 
 export interface WeightProfileEntry {

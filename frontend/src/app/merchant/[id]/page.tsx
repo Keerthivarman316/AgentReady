@@ -190,6 +190,7 @@ export default function MerchantDetailPage() {
                 <CardTitle>Growth Advisor</CardTitle>
               </CardHeader>
               <CardContent>
+                <p className="mb-4 text-sm text-muted-foreground">{growth.summary}</p>
                 {growth.fixes.length === 0 ? (
                   <p className="text-sm text-emerald-600 dark:text-emerald-400">No component sits below the category median — nothing to fix.</p>
                 ) : (
