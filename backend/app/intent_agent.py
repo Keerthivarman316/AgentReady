@@ -15,6 +15,7 @@ from typing import Callable, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.ap2_mandate import MandateDraft, build_mandate
+from app.llm_intent import extract_intent_llm
 from app.text_extraction import extract_category, extract_deadline_days, extract_price_paise
 
 DEFAULT_DEADLINE_DAYS = 7
@@ -28,10 +29,18 @@ class ExtractedIntent:
 
 
 def extract_intent(goal_text: str) -> ExtractedIntent:
+    """Tries the LLM extractor first when `GEMINI_API_KEY` is configured —
+    it catches phrasings the regex extractors structurally can't ("something
+    to block outside noise while working" implies Electronics/earbuds with
+    no keyword or price pattern present). Falls back to the regex
+    extractors per-field: an LLM response that gets the category right but
+    misses a genuinely ambiguous budget still keeps the correct category
+    rather than being discarded wholesale."""
+    llm_result = extract_intent_llm(goal_text)
     return ExtractedIntent(
-        category=extract_category(goal_text),
-        budget_cap_paise=extract_price_paise(goal_text),
-        deadline_days=extract_deadline_days(goal_text) or DEFAULT_DEADLINE_DAYS,
+        category=(llm_result and llm_result.get("category")) or extract_category(goal_text),
+        budget_cap_paise=(llm_result and llm_result.get("budget_cap_paise")) or extract_price_paise(goal_text),
+        deadline_days=(llm_result and llm_result.get("deadline_days")) or extract_deadline_days(goal_text) or DEFAULT_DEADLINE_DAYS,
     )
 
 

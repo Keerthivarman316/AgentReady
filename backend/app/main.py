@@ -21,7 +21,7 @@ from app.intent_agent import IntentResolutionError, resolve_intent_to_mandate
 from app.lost_sale_signal import get_lost_sale_signal
 from app.readiness_agent import assess_catalog
 from app.sla_advisor import advise_sla
-from app.text_extraction import extract_category, extract_product_keywords
+from app.text_extraction import extract_product_keywords
 from app.trust_engine import DEFAULT_WEIGHTS, score_merchant
 from app.trust_mirror import build_trust_mirror
 
@@ -211,14 +211,22 @@ def create_intent(req: IntentRequest):
             "deadline_days": mandate.deadline_days,
             "mandate_hash": mandate.mandate_hash,
         })
+
+        # Looked up from the DB rather than re-running extract_category on
+        # goal_text: when the LLM path resolved a category the regex
+        # extractor can't see (e.g. "something to block outside noise"),
+        # re-deriving via regex here would silently produce an empty name.
+        # mandate.category_id is correct regardless of which path resolved it.
+        cur.execute("SELECT name FROM categories WHERE id = %s", (mandate.category_id,))
+        (category_name,) = cur.fetchone()
         conn.commit()
 
-    # AP2 spec-shaped mandates alongside the existing HMAC one — re-derives
-    # category/keywords from goal_text with the same pure extractors the
-    # graph already used, rather than threading intermediate state out of
-    # resolve_intent_to_mandate just for this. See app/ap2_mandate.py.
+    # AP2 spec-shaped mandates alongside the existing HMAC one — product
+    # keywords still come from the regex extractor (intent_agent's LLM path
+    # doesn't resolve those; the Buyer Agent's own keyword matching is a
+    # separate, later concern). See app/ap2_mandate.py.
     ap2_open_checkout_mandate = build_open_checkout_mandate(
-        category_name=extract_category(mandate.goal_text) or "",
+        category_name=category_name,
         product_keywords=extract_product_keywords(mandate.goal_text),
         issued_at=mandate.issued_at, expires_at=mandate.expires_at,
     )

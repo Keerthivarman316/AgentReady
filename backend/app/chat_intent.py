@@ -19,7 +19,15 @@ buyer agent's weights could already do.
 from __future__ import annotations
 
 from app.buyer_weight_profiles import PERSONA_WEIGHTS
-from app.text_extraction import extract_category, extract_deadline_days, extract_price_paise, extract_product_keywords
+from app.llm_client import generate_json, is_llm_configured
+from app.text_extraction import (
+    CATEGORY_KEYWORDS,
+    PRODUCT_TYPE_KEYWORDS,
+    extract_category,
+    extract_deadline_days,
+    extract_price_paise,
+    extract_product_keywords,
+)
 
 PERSONA_TRIGGERS = {
     "Budget Hunter": ["cheap", "cheaper", "cheapest", "budget", "less expensive", "lower price", "save money", "affordable"],
@@ -41,14 +49,66 @@ def detect_persona(message: str) -> str | None:
     return None
 
 
+_FOLLOWUP_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "persona": {"type": "STRING", "enum": list(PERSONA_WEIGHTS.keys()), "nullable": True},
+        "category": {"type": "STRING", "enum": list(CATEGORY_KEYWORDS.keys()), "nullable": True},
+        "budget_cap_paise": {"type": "INTEGER", "nullable": True},
+        "deadline_days": {"type": "INTEGER", "nullable": True},
+        "product_keywords": {
+            "type": "ARRAY", "nullable": True,
+            "items": {"type": "STRING", "enum": sorted(set(PRODUCT_TYPE_KEYWORDS.values()))},
+        },
+    },
+    "required": ["persona", "category", "budget_cap_paise", "deadline_days", "product_keywords"],
+}
+
+_FOLLOWUP_PROMPT_TEMPLATE = """You are parsing one follow-up message in an ongoing shopping chat with an autonomous buyer agent.
+
+Message: {message!r}
+
+Identify ONLY what this specific message changes about the buyer's request. Every field must be null unless the message actually mentions or clearly implies that dimension — a field being null means "keep whatever was already set", so guessing when nothing was said would incorrectly reset it.
+
+- persona: which named buyer priority the message expresses, from {personas}, or null if it doesn't express one.
+- category: a new product category from {categories} if the message is redirecting to a different kind of product, else null.
+- budget_cap_paise: a new budget in Indian paise (1 rupee = 100 paise) if one is stated, else null.
+- deadline_days: a new deadline in days if one is stated, else null.
+- product_keywords: specific product types mentioned, chosen only from {product_keywords}, else null."""
+
+
+def _parse_followup_llm(message: str) -> dict | None:
+    if not is_llm_configured():
+        return None
+    prompt = _FOLLOWUP_PROMPT_TEMPLATE.format(
+        message=message,
+        personas=", ".join(PERSONA_WEIGHTS.keys()),
+        categories=", ".join(CATEGORY_KEYWORDS.keys()),
+        product_keywords=", ".join(sorted(set(PRODUCT_TYPE_KEYWORDS.values()))),
+    )
+    result = generate_json(prompt, _FOLLOWUP_RESPONSE_SCHEMA)
+    if result is None:
+        return None
+    if result.get("persona") is not None and result["persona"] not in PERSONA_WEIGHTS:
+        return None
+    if result.get("category") is not None and result["category"] not in CATEGORY_KEYWORDS:
+        return None
+    return result
+
+
 def parse_followup(message: str) -> dict:
-    """Pure: a follow-up chat message in, a structured diff out."""
-    persona = detect_persona(message)
+    """Tries an LLM-backed parse first when configured (catches phrasing the
+    keyword-trigger lists in PERSONA_TRIGGERS/PRODUCT_TYPE_KEYWORDS miss
+    entirely), falling back per-field to the regex/trigger extractors below
+    — same discipline as intent_agent.extract_intent. `None` in any field
+    means "this message didn't touch that dimension", from either path."""
+    llm_result = _parse_followup_llm(message)
+    persona = (llm_result and llm_result.get("persona")) or detect_persona(message)
     return {
         "persona": persona,
         "weights": dict(PERSONA_WEIGHTS[persona]) if persona else None,
-        "category": extract_category(message),
-        "budget_cap_paise": extract_price_paise(message),
-        "deadline_days": extract_deadline_days(message),
-        "product_keywords": extract_product_keywords(message) or None,
+        "category": (llm_result and llm_result.get("category")) or extract_category(message),
+        "budget_cap_paise": (llm_result and llm_result.get("budget_cap_paise")) or extract_price_paise(message),
+        "deadline_days": (llm_result and llm_result.get("deadline_days")) or extract_deadline_days(message),
+        "product_keywords": (llm_result and llm_result.get("product_keywords")) or extract_product_keywords(message) or None,
     }

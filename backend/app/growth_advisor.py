@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.benchmark_agent import compute_category_scores, summarize_benchmark
 from app.buyer_weight_profiles import PERSONA_WEIGHTS
+from app.llm_client import generate_text, is_llm_configured
 from app.trust_engine import DEFAULT_WEIGHTS, compute_composite, normalize_weights
 
 FIX_MESSAGES = {
@@ -104,12 +105,52 @@ def rank_by_persona(scores: list[dict], merchant_id: str) -> dict:
     return breakdown
 
 
+def _templated_fix_summary(fixes: list[dict]) -> str:
+    if not fixes:
+        return (
+            "No gaps versus the category median right now — every trust signal is at or above "
+            "the median for this category."
+        )
+    top = fixes[0]
+    return (
+        f"Biggest opportunity: {FIX_MESSAGES[top['component']]} Closing this gap alone would have "
+        f"the largest impact on your ranking against AI buyers in this category."
+    )
+
+
+_LLM_SUMMARY_PROMPT_TEMPLATE = """You are writing a short, plain-English paragraph of growth advice for an
+online merchant, based on a Trust Engine benchmark against their product category's median.
+
+Their rank in category: {rank} of {total}.
+
+Gaps below the category median, ranked by how much closing each one would improve their ranking (biggest impact first):
+{fixes_text}
+
+Write 2-3 sentences of direct, encouraging, specific advice. Reference the actual gap(s) above — do not invent
+numbers or signals not listed. Do not use markdown formatting."""
+
+
+def _llm_fix_summary(fixes: list[dict], benchmark: dict) -> str | None:
+    if not is_llm_configured() or not fixes:
+        return None
+    fixes_text = "\n".join(
+        f"- {f['component']}: {f['merchant_value']:.2f} vs category median {f['category_median']:.2f} "
+        f"({FIX_MESSAGES[f['component']]})"
+        for f in fixes
+    )
+    prompt = _LLM_SUMMARY_PROMPT_TEMPLATE.format(
+        rank=benchmark.get("rank", "?"), total=benchmark.get("total_in_category", "?"), fixes_text=fixes_text,
+    )
+    return generate_text(prompt)
+
+
 def advise_growth(cur, merchant_id: str, category_id: str, weights: dict | None = None) -> dict:
     scores = compute_category_scores(cur, category_id, weights=weights)
     benchmark = summarize_benchmark(scores, merchant_id)
     fixes = generate_fix_list(benchmark, weights)
     persona_breakdown = rank_by_persona(scores, merchant_id)
-    return {"benchmark": benchmark, "fixes": fixes, "persona_breakdown": persona_breakdown}
+    summary = _llm_fix_summary(fixes, benchmark) or _templated_fix_summary(fixes)
+    return {"benchmark": benchmark, "fixes": fixes, "persona_breakdown": persona_breakdown, "summary": summary}
 
 
 def simulate_what_if(cur, merchant_id: str, category_id: str, component: str,

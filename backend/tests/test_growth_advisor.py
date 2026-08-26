@@ -1,4 +1,4 @@
-from app.growth_advisor import generate_fix_list, rank_by_persona, rerank_with_override
+from app.growth_advisor import _llm_fix_summary, _templated_fix_summary, generate_fix_list, rank_by_persona, rerank_with_override
 from app.trust_engine import DEFAULT_WEIGHTS, compute_composite
 
 
@@ -89,3 +89,30 @@ def test_rank_by_persona_covers_every_named_persona():
     breakdown = rank_by_persona(scores, "only")
     assert set(breakdown) == {"Balanced (default)", "Trust-First", "Fast-Shipper", "Budget Hunter", "Reputation-Led"}
     assert all(v["rank"] == 1 for v in breakdown.values())
+
+
+def test_templated_fix_summary_when_no_gaps():
+    assert "No gaps" in _templated_fix_summary([])
+
+
+def test_templated_fix_summary_mentions_top_fix():
+    fixes = [{"component": "payment_trust", "merchant_value": 0.5, "category_median": 0.8, "gap": 0.3, "impact": 0.1}]
+    summary = _templated_fix_summary(fixes)
+    assert "Payment trust" in summary or "payment trust" in summary.lower()
+
+
+def test_llm_fix_summary_returns_none_when_unconfigured():
+    fixes = [{"component": "payment_trust", "merchant_value": 0.5, "category_median": 0.8, "gap": 0.3, "impact": 0.1}]
+    assert _llm_fix_summary(fixes, {"rank": 3, "total_in_category": 10}) is None
+
+
+def test_llm_fix_summary_returns_none_when_no_fixes(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+    assert _llm_fix_summary([], {"rank": 1, "total_in_category": 10}) is None
+
+
+def test_llm_fix_summary_uses_generated_text_when_configured(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr("app.growth_advisor.generate_text", lambda prompt, **kw: "Focus on payment trust first.")
+    fixes = [{"component": "payment_trust", "merchant_value": 0.5, "category_median": 0.8, "gap": 0.3, "impact": 0.1}]
+    assert _llm_fix_summary(fixes, {"rank": 3, "total_in_category": 10}) == "Focus on payment trust first."

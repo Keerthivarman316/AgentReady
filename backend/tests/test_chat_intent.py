@@ -49,3 +49,37 @@ def test_parse_followup_product_redirect():
 def test_parse_followup_deadline_change():
     diff = parse_followup("I need it within 2 days")
     assert diff["deadline_days"] == 2
+
+
+def test_parse_followup_uses_llm_result_when_configured(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr(
+        "app.chat_intent.generate_json",
+        lambda prompt, schema, **kw: {
+            "persona": "Trust-First", "category": None, "budget_cap_paise": None,
+            "deadline_days": None, "product_keywords": None,
+        },
+    )
+    diff = parse_followup("only show me sellers I can actually trust")
+    assert diff["persona"] == "Trust-First"
+    assert diff["weights"] == PERSONA_WEIGHTS["Trust-First"]
+
+
+def test_parse_followup_falls_back_to_regex_when_llm_unavailable(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr("app.chat_intent.generate_json", lambda *a, **kw: None)
+    diff = parse_followup("actually keep it under 1500 rupees")
+    assert diff["budget_cap_paise"] == 150_000
+
+
+def test_parse_followup_rejects_unknown_persona_from_llm(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key-for-test")
+    monkeypatch.setattr(
+        "app.chat_intent.generate_json",
+        lambda *a, **kw: {
+            "persona": "Not A Real Persona", "category": None, "budget_cap_paise": None,
+            "deadline_days": None, "product_keywords": None,
+        },
+    )
+    diff = parse_followup("some message")
+    assert diff["persona"] is None
