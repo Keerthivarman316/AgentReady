@@ -21,9 +21,23 @@ from langgraph.graph import END, StateGraph
 
 from app.audit_trail import log_audit
 from app.text_extraction import extract_product_keywords
-from app.trust_engine import compute_composite, compute_price_fit_score, fetch_price_band, score_merchant
+from app.trust_engine import (
+    bulk_fetch_merchant_stats,
+    compute_composite,
+    compute_price_fit_score,
+    fetch_price_band,
+    score_merchant,
+)
 
 REAL_TIME_TIE_EPSILON = 0.02
+
+# A search with no real constraint (huge budget, no product keyword) can
+# match every product in a category -- at a 100x-scale dataset that's tens
+# of thousands of candidates, which is never a reasonable ranking to hand a
+# buyer (or a browser) regardless of how fast scoring them all is. Capped
+# post-sort, so it's always the genuine top scorers that survive, not an
+# arbitrary DB-order slice.
+MAX_RANKED_RESULTS = 200
 
 # A runner-up only gets a counter-offer if it's within this of the winner's
 # composite score — far enough behind and no discount should be able to
@@ -100,11 +114,19 @@ def rank_by_trust(cur, candidates: list[dict], weights: dict | None = None) -> t
     # All candidates here are already scoped to one category (fetch_candidates
     # filters by category_id), so their price band is identical -- shared
     # across every score_merchant call instead of re-querying it once per
-    # candidate. Matters once a search can have thousands of survivors.
+    # candidate. And a merchant with several surviving products (up to a
+    # dozen, one per product type) would otherwise get its
+    # payment/promise/reputation stats recomputed once per product. Both
+    # matter once a search has thousands of survivors -- but even scoped to
+    # one merchant per lookup, thousands of *merchants* means thousands of
+    # round trips; bulk_fetch_merchant_stats prefetches all of them in a
+    # handful of GROUP BY queries instead, so score_merchant's cache lookups
+    # below are always hits, never a fallback per-merchant query.
     price_band_cache: dict[str, tuple[int, int]] = {}
+    merchant_stats_cache = bulk_fetch_merchant_stats(cur, list({c["merchant_id"] for c in candidates}))
     for c in candidates:
         result = score_merchant(cur, c["merchant_id"], product_id=c["product_id"], weights=weights,
-                                 price_band_cache=price_band_cache)
+                                 price_band_cache=price_band_cache, merchant_stats_cache=merchant_stats_cache)
         enriched = {
             **c,
             "composite_score": result["composite_score"],
@@ -116,7 +138,7 @@ def rank_by_trust(cur, candidates: list[dict], weights: dict | None = None) -> t
         else:
             ranked.append(enriched)
     ranked.sort(key=lambda c: c["composite_score"], reverse=True)
-    return ranked, quarantined
+    return ranked[:MAX_RANKED_RESULTS], quarantined
 
 
 def real_time_optimize(ranked_candidates: list[dict], live_price_lookup=None,

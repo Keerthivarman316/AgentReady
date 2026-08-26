@@ -10,6 +10,7 @@ functions gather those stats from Postgres.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -225,9 +226,114 @@ def fetch_product(cur, product_id: str):
     return cur.fetchone()
 
 
+def bulk_fetch_merchant_stats(cur, merchant_ids: list[str]) -> dict[str, tuple[float, float, float]]:
+    """One-shot bulk equivalent of calling fetch_payment_stats +
+    fetch_promise_stats + fetch_reputation once per merchant — a handful of
+    GROUP BY queries scoped to `merchant_ids` instead of ~6 queries for
+    each one individually. Returns {merchant_id: (payment_trust,
+    promise_keeping, reputation)}, ready to hand straight to
+    score_merchant's `merchant_stats_cache`.
+
+    Exists because a buyer search can have thousands of surviving
+    candidates across thousands of merchants — at that scale, per-merchant
+    round trips (even cached per merchant, not per product) still add up to
+    tens of thousands of queries and tens of seconds. Reuses the exact same
+    pure compute_* functions score_merchant does; only how the raw stats
+    are gathered differs."""
+    if not merchant_ids:
+        return {}
+
+    captured, failed = defaultdict(int), defaultdict(int)
+    cur.execute(
+        """
+        SELECT merchant_id,
+               count(*) FILTER (WHERE status = 'captured'),
+               count(*) FILTER (WHERE status = 'failed')
+        FROM transactions WHERE merchant_id = ANY(%s) GROUP BY merchant_id
+        """,
+        (merchant_ids,),
+    )
+    for mid, c, f in cur.fetchall():
+        captured[str(mid)], failed[str(mid)] = c, f
+
+    refunds_processed = defaultdict(int)
+    cur.execute(
+        """
+        SELECT t.merchant_id, count(*)
+        FROM refunds r JOIN transactions t ON t.id = r.transaction_id
+        WHERE t.merchant_id = ANY(%s) AND r.status = 'processed'
+        GROUP BY t.merchant_id
+        """,
+        (merchant_ids,),
+    )
+    for mid, c in cur.fetchall():
+        refunds_processed[str(mid)] = c
+
+    disputes_count = defaultdict(int)
+    cur.execute(
+        """
+        SELECT t.merchant_id, count(*)
+        FROM disputes d JOIN transactions t ON t.id = d.transaction_id
+        WHERE t.merchant_id = ANY(%s) GROUP BY t.merchant_id
+        """,
+        (merchant_ids,),
+    )
+    for mid, c in cur.fetchall():
+        disputes_count[str(mid)] = c
+
+    delivery_refunds = defaultdict(int)
+    cur.execute(
+        """
+        SELECT t.merchant_id, count(*)
+        FROM refunds r JOIN transactions t ON t.id = r.transaction_id
+        WHERE t.merchant_id = ANY(%s) AND r.status = 'processed'
+          AND r.reason_code IN ('item_not_delivered', 'item_not_received')
+        GROUP BY t.merchant_id
+        """,
+        (merchant_ids,),
+    )
+    for mid, c in cur.fetchall():
+        delivery_refunds[str(mid)] = c
+
+    cod_total, cod_violations = defaultdict(int), defaultdict(int)
+    cur.execute(
+        """
+        SELECT t.merchant_id, t.order_created_at, t.payment_captured_at, m.declared_sla_days
+        FROM transactions t JOIN merchants m ON m.id = t.merchant_id
+        WHERE t.merchant_id = ANY(%s) AND t.payment_method = 'cod'
+          AND t.status = 'captured' AND t.payment_captured_at IS NOT NULL
+        """,
+        (merchant_ids,),
+    )
+    for mid, order_created_at, payment_captured_at, declared_sla_days in cur.fetchall():
+        mid = str(mid)
+        cod_total[mid] += 1
+        gap_days = (payment_captured_at - order_created_at) / timedelta(days=1)
+        if gap_days > declared_sla_days + SLA_GRACE_DAYS:
+            cod_violations[mid] += 1
+
+    avg_ratings = {}
+    cur.execute("SELECT merchant_id, avg_rating FROM reputation WHERE merchant_id = ANY(%s)", (merchant_ids,))
+    for mid, avg_rating in cur.fetchall():
+        avg_ratings[str(mid)] = float(avg_rating)
+
+    stats: dict[str, tuple[float, float, float]] = {}
+    for mid in merchant_ids:
+        payment_trust = compute_payment_trust_score(
+            PaymentStats(captured[mid], failed[mid], refunds_processed[mid], disputes_count[mid])
+        )
+        promise_keeping = compute_promise_keeping_score(
+            PromiseStats(captured[mid], delivery_refunds[mid], cod_total[mid], cod_violations[mid])
+        )
+        reputation = compute_reputation_score(avg_ratings.get(mid))
+        stats[mid] = (payment_trust, promise_keeping, reputation)
+    return stats
+
+
 def score_merchant(cur, merchant_id: str, product_id: str | None = None,
                     weights: dict[str, float] | None = None,
-                    price_band_cache: dict[str, tuple[int, int]] | None = None) -> dict:
+                    price_band_cache: dict[str, tuple[int, int]] | None = None,
+                    merchant_stats_cache: dict[str, tuple[float, float, float]] | None = None) -> dict:
     """`price_band_cache`, when given, is a caller-owned {category_id:
     (band_min, band_max)} dict this function reads from and writes to
     instead of re-querying fetch_price_band for a category it's already
@@ -237,8 +343,21 @@ def score_merchant(cur, merchant_id: str, product_id: str | None = None,
     should share one cache across the whole pass — without it, a category
     with thousands of merchants (or a merchant with many products) turns
     into thousands of near-identical round trips for the same answer.
-    Callers scoring a single merchant in isolation can omit it; each lookup
-    then costs one query, exactly as before this parameter existed."""
+
+    `merchant_stats_cache`, when given, is a caller-owned {merchant_id:
+    (payment_trust, promise_keeping, reputation)} dict — none of those three
+    depend on which product is being scored, so a caller scoring the same
+    merchant against several of its products in one pass
+    (buyer_agent.rank_by_trust scores one candidate per surviving product,
+    and a merchant can have a dozen) should share one cache across the
+    whole pass. Without it, a merchant with N surviving products triggers N
+    redundant, identical payment/promise/reputation lookups — the actual
+    cause of a broad buyer search (thousands of merchants x up to a dozen
+    products each) timing out before this cache existed.
+
+    Both caches default to None, preserving exact prior per-call behavior
+    for callers scoring one merchant in isolation (e.g. the /trust-score
+    endpoint)."""
     def _price_band(category_id: str) -> tuple[int, int]:
         if price_band_cache is None:
             return fetch_price_band(cur, category_id)
@@ -246,9 +365,14 @@ def score_merchant(cur, merchant_id: str, product_id: str | None = None,
             price_band_cache[category_id] = fetch_price_band(cur, category_id)
         return price_band_cache[category_id]
 
-    payment_trust = compute_payment_trust_score(fetch_payment_stats(cur, merchant_id))
-    promise_keeping = compute_promise_keeping_score(fetch_promise_stats(cur, merchant_id))
-    reputation = compute_reputation_score(fetch_reputation(cur, merchant_id))
+    if merchant_stats_cache is not None and merchant_id in merchant_stats_cache:
+        payment_trust, promise_keeping, reputation = merchant_stats_cache[merchant_id]
+    else:
+        payment_trust = compute_payment_trust_score(fetch_payment_stats(cur, merchant_id))
+        promise_keeping = compute_promise_keeping_score(fetch_promise_stats(cur, merchant_id))
+        reputation = compute_reputation_score(fetch_reputation(cur, merchant_id))
+        if merchant_stats_cache is not None:
+            merchant_stats_cache[merchant_id] = (payment_trust, promise_keeping, reputation)
 
     if product_id is not None:
         product = fetch_product(cur, product_id)
