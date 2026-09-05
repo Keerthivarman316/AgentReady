@@ -53,8 +53,15 @@ export const api = {
 
   getCatalog: () => apiFetch<CatalogResult>("/catalog"),
 
-  createIntent: (consumer_id: string, goal_text: string) =>
-    apiFetch<IntentResult>("/intent", { method: "POST", body: JSON.stringify({ consumer_id, goal_text }) }),
+  createIntent: (
+    consumer_id: string,
+    goal_text: string,
+    hint?: { category?: string | null; budget_cap_paise?: number | null; deadline_days?: number | null }
+  ) =>
+    apiFetch<IntentResult>("/intent", {
+      method: "POST",
+      body: JSON.stringify({ consumer_id, goal_text, ...hint }),
+    }),
 
   parseChatFollowup: (message: string) =>
     apiFetch<ChatFollowupResult>("/chat/parse-followup", { method: "POST", body: JSON.stringify({ message }) }),

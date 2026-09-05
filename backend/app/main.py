@@ -192,10 +192,22 @@ def get_trust_history(merchant_id: str, limit: int = 20):
 class IntentRequest(BaseModel):
     consumer_id: str
     goal_text: str
+    # Optional pre-parsed fields from the buyer chat's own parse-followup
+    # call — when category+budget are already known, resolve_intent_to_mandate
+    # skips its own LLM extraction instead of re-deriving the same fields
+    # from goal_text a second time in the same turn.
+    category: str | None = None
+    budget_cap_paise: int | None = None
+    deadline_days: int | None = None
 
 
 @app.post("/intent")
 def create_intent(req: IntentRequest):
+    hint = {
+        "category": req.category,
+        "budget_cap_paise": req.budget_cap_paise,
+        "deadline_days": req.deadline_days,
+    }
     with get_connection() as conn, conn.cursor() as cur:
         def category_id_lookup(name: str) -> str | None:
             cur.execute("SELECT id FROM categories WHERE name = %s", (name,))
@@ -203,7 +215,7 @@ def create_intent(req: IntentRequest):
             return str(row[0]) if row else None
 
         try:
-            mandate = resolve_intent_to_mandate(req.consumer_id, req.goal_text, category_id_lookup)
+            mandate = resolve_intent_to_mandate(req.consumer_id, req.goal_text, category_id_lookup, hint=hint)
         except IntentResolutionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

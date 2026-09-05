@@ -28,14 +28,25 @@ class ExtractedIntent:
     deadline_days: int
 
 
-def extract_intent(goal_text: str) -> ExtractedIntent:
+def extract_intent(goal_text: str, hint: dict | None = None) -> ExtractedIntent:
     """Tries the LLM extractor first when `GEMINI_API_KEY` is configured —
     it catches phrasings the regex extractors structurally can't ("something
     to block outside noise while working" implies Electronics/earbuds with
     no keyword or price pattern present). Falls back to the regex
     extractors per-field: an LLM response that gets the category right but
     misses a genuinely ambiguous budget still keeps the correct category
-    rather than being discarded wholesale."""
+    rather than being discarded wholesale.
+
+    `hint` lets a caller that already resolved category+budget by other
+    means (the buyer chat's per-turn `parse_followup`, which just paid for
+    its own Gemini call on nearly the same text) skip this function's LLM
+    call entirely instead of re-deriving the same fields a second time."""
+    if hint and hint.get("category") is not None and hint.get("budget_cap_paise") is not None:
+        return ExtractedIntent(
+            category=hint["category"],
+            budget_cap_paise=hint["budget_cap_paise"],
+            deadline_days=hint.get("deadline_days") or DEFAULT_DEADLINE_DAYS,
+        )
     llm_result = extract_intent_llm(goal_text)
     return ExtractedIntent(
         category=(llm_result and llm_result.get("category")) or extract_category(goal_text),
@@ -52,6 +63,7 @@ class IntentGraphState(TypedDict, total=False):
     consumer_id: str
     goal_text: str
     category_id_lookup: Callable[[str], str | None]
+    hint: dict | None
     intent: ExtractedIntent
     category_id: str | None
     error: str | None
@@ -59,7 +71,7 @@ class IntentGraphState(TypedDict, total=False):
 
 
 def _node_extract(state: IntentGraphState) -> dict:
-    return {"intent": extract_intent(state["goal_text"])}
+    return {"intent": extract_intent(state["goal_text"], state.get("hint"))}
 
 
 def _route_after_extract(state: IntentGraphState) -> str:
@@ -127,11 +139,12 @@ def _build_intent_graph():
 intent_graph = _build_intent_graph()
 
 
-def resolve_intent_to_mandate(consumer_id: str, goal_text: str, category_id_lookup) -> MandateDraft:
+def resolve_intent_to_mandate(consumer_id: str, goal_text: str, category_id_lookup, hint: dict | None = None) -> MandateDraft:
     """`category_id_lookup(category_name) -> str | None` resolves a category
-    name to its DB id; kept injectable so this stays testable without a DB."""
+    name to its DB id; kept injectable so this stays testable without a DB.
+    `hint` is forwarded to `extract_intent` — see its docstring."""
     result = intent_graph.invoke({
-        "consumer_id": consumer_id, "goal_text": goal_text, "category_id_lookup": category_id_lookup,
+        "consumer_id": consumer_id, "goal_text": goal_text, "category_id_lookup": category_id_lookup, "hint": hint,
     })
     if result.get("error"):
         raise IntentResolutionError(result["error"])
