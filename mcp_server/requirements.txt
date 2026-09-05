@@ -1,3 +1,10 @@
 mcp[cli]==1.29.0
 psycopg[binary]==3.2.3
 python-dotenv==1.0.1
+# server.py imports backend/app modules directly (buyer_agent, growth_advisor, etc.)
+# rather than over HTTP, so this venv needs backend's runtime deps too -- pinned to
+# match backend/requirements.txt. Keep in sync when backend adds a new import server.py
+# transitively pulls in (bit us once: langgraph was added to buyer_agent.py after this
+# venv was created, silently breaking the MCP server with CONNECTION_CLOSED).
+langgraph==0.2.34
+langchain-core==0.3.6
