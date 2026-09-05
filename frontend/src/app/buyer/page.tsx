@@ -65,6 +65,13 @@ function friendlyError(rawMessage: string, catalog: CatalogResult | null): strin
   return `Couldn't process that: ${rawMessage}`;
 }
 
+function friendlyPurchaseError(rawMessage: string): string {
+  if (rawMessage.includes("not active")) {
+    return "This mandate already completed checkout — see the order below rather than purchasing again.";
+  }
+  return rawMessage;
+}
+
 export default function BuyerPage() {
   const [consumerId] = useState("demo-consumer");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -84,6 +91,14 @@ export default function BuyerPage() {
   const [productCheckouts, setProductCheckouts] = useState<Record<string, CheckoutResult | null>>({});
   const [catalog, setCatalog] = useState<CatalogResult | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+
+  // "Confirm purchase" (agentic, top-pick + fallback) and per-candidate "Buy
+  // this" both act on the same mandate — without a shared busy/fulfilled
+  // guard, firing both lets a second request race a mandate the first
+  // already fulfilled, surfacing a raw 409 right next to a success toast.
+  const purchaseBusy = loading === "purchase" || buyingProductId !== null;
+  const mandateFulfilled =
+    checkout?.status === "success" || Object.values(productCheckouts).some((r) => r?.status === "success");
 
   useEffect(() => {
     transcriptRef.current?.scrollTo({ top: transcriptRef.current.scrollHeight, behavior: "smooth" });
@@ -120,7 +135,11 @@ export default function BuyerPage() {
       const productOrCategory = nextProductPhrase || nextCategory.toLowerCase();
       const goalText = `${productOrCategory} under ${nextBudgetPaise / 100} rupees within ${nextDeadlineDays} days`.trim();
 
-      const result = await api.createIntent(consumerId, goalText);
+      const result = await api.createIntent(consumerId, goalText, {
+        category: nextCategory || null,
+        budget_cap_paise: nextBudgetPaise,
+        deadline_days: nextDeadlineDays,
+      });
       const preview = await api.rankPreview(result.mandate_id, toOverrides(nextWeights));
 
       setProductPhrase(nextProductPhrase);
@@ -158,7 +177,7 @@ export default function BuyerPage() {
   }
 
   async function confirmPurchase() {
-    if (!mandate) return;
+    if (!mandate || purchaseBusy || mandateFulfilled) return;
     setLoading("purchase");
     setError(null);
     try {
@@ -180,14 +199,14 @@ export default function BuyerPage() {
         toast.error(`Checkout exhausted all ${result.checkout.attempted} candidates`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyPurchaseError(e instanceof Error ? e.message : String(e)));
     } finally {
       setLoading(null);
     }
   }
 
   async function buyProduct(productId: string, productName: string) {
-    if (!mandate) return;
+    if (!mandate || purchaseBusy || mandateFulfilled) return;
     setBuyingProductId(productId);
     setError(null);
     try {
@@ -203,7 +222,7 @@ export default function BuyerPage() {
         toast.error(`Checkout failed for ${productName}`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(friendlyPurchaseError(e instanceof Error ? e.message : String(e)));
     } finally {
       setBuyingProductId(null);
     }
@@ -352,8 +371,8 @@ export default function BuyerPage() {
                     />
                     Simulate top-choice failure
                   </label>
-                  <Button onClick={confirmPurchase} disabled={loading === "purchase"} size="sm">
-                    {loading === "purchase" ? "Checking out…" : "Confirm purchase"}
+                  <Button onClick={confirmPurchase} disabled={purchaseBusy || mandateFulfilled} size="sm">
+                    {loading === "purchase" ? "Checking out…" : mandateFulfilled ? "Already purchased" : "Confirm purchase"}
                   </Button>
                 </div>
               )}
@@ -385,6 +404,7 @@ export default function BuyerPage() {
                     rank={idx + 1}
                     onBuy={() => buyProduct(candidate.product_id, candidate.product_name)}
                     buying={buyingProductId === candidate.product_id}
+                    disabled={(purchaseBusy && buyingProductId !== candidate.product_id) || mandateFulfilled}
                     result={productCheckouts[candidate.product_id]}
                   />
                 ))}
@@ -452,12 +472,14 @@ function CandidateCard({
   rank,
   onBuy,
   buying,
+  disabled,
   result,
 }: {
   candidate: RankedCandidate;
   rank: number;
   onBuy: () => void;
   buying: boolean;
+  disabled: boolean;
   result: CheckoutResult | null | undefined;
 }) {
   return (
@@ -490,7 +512,7 @@ function CandidateCard({
         </div>
       )}
       <div className="mt-3 flex items-center justify-between">
-        <Button onClick={onBuy} disabled={buying} variant="outline" size="sm">
+        <Button onClick={onBuy} disabled={buying || disabled} variant="outline" size="sm">
           {buying ? "Buying…" : "Buy this"}
         </Button>
         {result && (
